@@ -2,7 +2,7 @@
   "name": "jrnl-web",
   "version": "1.0.0",
   "private": true,
-  "description": "Jrnl — the journal app as a static SPA + API. No dependencies; uses node:sqlite.",
+  "description": "Journal — the journal app as a static SPA + API. No dependencies; uses node:sqlite.",
   "type": "module",
   "engines": {
     "node": ">=22.5"

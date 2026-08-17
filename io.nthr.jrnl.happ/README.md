@@ -1,6 +1,6 @@
-# Jrnl — web
+# Journal — web
 
-The Jrnl journal app as a single-page app plus an API: open-to-write, the
+The Journal app as a single-page app plus an API: open-to-write, the
 typewriter surface, the 5-minute entry lifecycle, journals, location tagging,
 inline media, and read mode's list / calendar heatmap / map.
 

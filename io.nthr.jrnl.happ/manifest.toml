@@ -1,11 +1,11 @@
-# Jrnl — vibecoded personal journal as a harbor app.
+# Journal — vibecoded personal journal as a harbor app.
 #
 # Zero npm dependencies; Node's built-in sqlite (node:sqlite), stable as of 26.
 # Data (SQLite + uploaded media) lives in the harbor data volume.
 
 [app]
 version      = "1.0.0"
-display_name = "Jrnl"
+display_name = "Journal"
 description  = "A quiet personal journal: typewriter writing, location tags, list / calendar / map"
 subdomain    = "jrnl"
 
