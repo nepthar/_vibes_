@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1"
+    />
+    <meta name="theme-color" content="#fdfcf8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>Jrnl</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26' font-family='Georgia,serif'>J</text></svg>"
+    />
+  </head>
+  <body>
+    <!-- Sign in / sign up. Sign-in is the default; a token is only asked for when creating. -->
+    <div id="auth" class="auth" hidden>
+      <form id="auth-form" class="auth-card" autocomplete="on">
+        <h1 class="auth-title">Journal ~ A quite space to write</h1>
+        <p class="auth-sub">Sign in.</p>
+        <input
+          id="auth-username"
+          name="username"
+          class="field"
+          placeholder="username"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
+          autocomplete="username"
+          required
+        />
+        <input
+          id="auth-password"
+          name="password"
+          class="field"
+          type="password"
+          placeholder="password"
+          autocomplete="current-password"
+          required
+        />
+        <input
+          id="auth-token"
+          name="signup-token"
+          class="field"
+          placeholder="signup token"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
+          autocomplete="off"
+          hidden
+        />
+        <p id="auth-error" class="auth-error" role="alert"></p>
+        <button id="auth-submit" class="auth-button" type="submit">Sign in</button>
+        <p class="auth-switch">
+          <span id="auth-switch-lead">Have a signup token?</span>
+          <button type="button" id="auth-toggle" class="auth-link">Create an account</button>
+        </p>
+      </form>
+    </div>
+
+    <!-- The app proper: write / list / calendar / map share one chrome. -->
+    <div id="shell" class="shell" hidden>
+      <header class="chrome-row">
+        <div class="chrome-leading">
+          <button class="icon-button" data-app-menu title="Menu" aria-label="Menu" aria-haspopup="menu" aria-expanded="false" data-icon="menu"></button>
+          <div class="chrome-titles">
+            <span class="journal-icon" data-icon="book-multiple" aria-hidden="true"></span>
+            <span class="journal-name" data-journal-name>personal</span>
+            <span id="save-hint" class="save-hint" aria-live="polite"></span>
+          </div>
+        </div>
+        <div class="chrome-tabs">
+          <div class="segmented" role="tablist" aria-label="View">
+            <button role="tab" data-view="write" class="segment is-selected" data-icon="pencil" aria-label="Write" aria-selected="true"></button>
+            <button role="tab" data-view="list" class="segment" data-icon="list" aria-label="List" aria-selected="false"></button>
+            <button role="tab" data-view="calendar" class="segment" data-icon="calendar" aria-label="Calendar" aria-selected="false"></button>
+            <button role="tab" data-view="map" class="segment" data-icon="map" aria-label="Map" aria-selected="false"></button>
+          </div>
+        </div>
+        <button id="location-button" class="icon-button" title="Location"></button>
+      </header>
+
+      <section id="write" class="write" aria-label="Write">
+        <div id="writing" class="writing">
+          <div id="surface" class="surface">
+            <div id="stamp" class="stamp"></div>
+            <div
+              id="editor"
+              class="editor"
+              contenteditable="true"
+              role="textbox"
+              aria-multiline="true"
+              aria-label="Entry"
+              spellcheck="true"
+            ></div>
+          </div>
+        </div>
+        <input id="media-input" type="file" accept="image/*,video/*" multiple hidden />
+      </section>
+
+      <section id="read" class="read" aria-label="Read" hidden>
+        <div id="read-body" class="read-body"></div>
+      </section>
+    </div>
+
+    <div id="sheet-root"></div>
+    <div id="app-menu" class="app-menu" hidden role="menu">
+      <button type="button" role="menuitem" data-menu-action="media">
+        <span data-icon="photo"></span>
+        <span>Add media</span>
+      </button>
+      <button type="button" role="menuitem" data-menu-action="journals">
+        <span data-icon="book-multiple"></span>
+        <span>Journals</span>
+      </button>
+      <button type="button" role="menuitem" data-menu-action="logout">
+        <span data-icon="exit"></span>
+        <span data-logout-user>Log out</span>
+      </button>
+    </div>
+
+    <script type="module" src="/js/app.js"></script>
+  </body>
+</html>

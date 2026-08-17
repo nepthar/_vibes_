@@ -1,0 +1,38 @@
+# Jrnl — vibecoded personal journal as a harbor app.
+#
+# Zero npm dependencies; Node's built-in sqlite (node:sqlite), stable as of 26.
+# Data (SQLite + uploaded media) lives in the harbor data volume.
+
+[app]
+version      = "1.0.0"
+display_name = "Jrnl"
+description  = "A quiet personal journal: typewriter writing, location tags, list / calendar / map"
+subdomain    = "jrnl"
+
+[config]
+# Shown to Nominatim / Overpass; identify your instance before a public deploy.
+geo_ua = { desc = "User-Agent for geocoding requests", default = "Jrnl/1.0 (self-hosted harbor app)" }
+
+[volumes]
+server  = { kind = "app", src = "server", desc = "HTTP API and static file server" }
+public  = { kind = "app", src = "public", desc = "SPA client" }
+scripts = { kind = "app", src = "scripts", desc = "Operator scripts (signup tokens, seed)" }
+pkg     = { kind = "app", src = "package.json", desc = "Package metadata" }
+data    = { kind = "data", desc = "SQLite database, WAL, and uploaded media" }
+
+[run.main]
+image = "node:26-bookworm-slim"
+cmd   = ["node", "/app/server/index.js"]
+volumes = { server = "/app/server", public = "/app/public", scripts = "/app/scripts", pkg = "/app/package.json", data = "/data" }
+
+[run.main.routes]
+main = { port = "8787" }
+
+[run.main.env]
+JRNL_DATA    = "/data"
+JRNL_HOST    = "${routes.main}"
+JRNL_GEO_UA  = "${geo_ua}"
+
+[commands]
+signup-token = { cmd = ["node", "/app/scripts/signup-token.js"], desc = "Mint a one-time invite token for a new account" }
+seed-db = { cmd = ["node", "/app/scripts/seed.js"], desc = "Seed the database with some data" }

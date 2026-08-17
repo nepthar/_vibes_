@@ -1,0 +1,1139 @@
+/*
+ * "Literary serif": entry text in a serif face with generous
+ * line spacing, chrome small and quiet in the system font, a slight paper
+ * warmth in light mode, standard dark mode. No decoration beyond typography
+ * and spacing.
+ */
+
+:root {
+  --paper: rgb(253, 252, 248);
+  --label: #000;
+  --label-secondary: rgba(60, 60, 67, 0.6);
+  --label-tertiary: rgba(60, 60, 67, 0.32);
+  --separator: rgba(60, 60, 67, 0.18);
+  --fill-secondary: #f1f0eb;
+  --fill-raised: rgba(255, 255, 255, 0.82);
+  --accent: #007aff;
+  --accent-contrast: #fff;
+  --shadow: rgba(0, 0, 0, 0.12);
+
+  --serif: "Iowan Old Style", ui-serif, ".New York", Palatino, "Palatino Linotype",
+    "Hoefler Text", Charter, Georgia, "Times New Roman", serif;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+
+  --entry-size: 17px;
+  --entry-line: 1.72;
+  --measure: 700px;
+  --inset: 20px;
+
+  /* Kept in sync with visualViewport so an on-screen keyboard shrinks the
+     writing area the way it does on iOS. --safe-top is a high-water mark:
+     iOS reports env(safe-area-inset-top) as 0 while the keyboard is up. */
+  --app-height: 100dvh;
+  --app-top: 0px;
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #000;
+    --label: #fff;
+    --label-secondary: rgba(235, 235, 245, 0.6);
+    --label-tertiary: rgba(235, 235, 245, 0.32);
+    --separator: rgba(235, 235, 245, 0.16);
+    --fill-secondary: #1c1c1e;
+    --fill-raised: rgba(38, 38, 40, 0.9);
+    --accent: #0a84ff;
+    --shadow: rgba(0, 0, 0, 0.5);
+  }
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  background: var(--paper);
+  color: var(--label);
+  font-family: var(--sans);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+svg {
+  display: block;
+}
+
+/* MARK: - Auth */
+
+.auth {
+  display: grid;
+  place-items: center;
+  height: 100dvh;
+  padding: 24px;
+}
+
+.auth-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.auth-title {
+  font-family: var(--serif);
+  font-size: 34px;
+  font-weight: 400;
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.auth-sub {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--label-secondary);
+  line-height: 1.45;
+}
+
+.field {
+  font: inherit;
+  font-size: 16px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--separator);
+  background: var(--fill-secondary);
+  color: var(--label);
+}
+
+.field:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.auth-button {
+  margin-top: 6px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 500;
+  font-size: 16px;
+}
+
+.auth-button:disabled {
+  opacity: 0.5;
+}
+
+.auth-switch {
+  margin: 0;
+  padding: 8px 0;
+  font-size: 13px;
+  color: var(--label-secondary);
+  text-align: center;
+}
+
+.auth-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.auth-error {
+  margin: 0;
+  min-height: 17px;
+  font-size: 13px;
+  color: #ff453a;
+}
+
+.auth-error:empty {
+  min-height: 0;
+}
+
+/* MARK: - Shell */
+
+.shell {
+  position: fixed;
+  top: var(--app-top);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  height: var(--app-height);
+  overflow: hidden;
+}
+
+.read,
+.write {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+}
+
+/* MARK: - Chrome */
+
+.chrome-row {
+  --chrome-gutter: max(var(--inset), env(safe-area-inset-left));
+  --chrome-end: max(var(--inset), env(safe-area-inset-right));
+  display: grid;
+  /* Equal side columns so the tab control stays viewport-centered
+     regardless of how wide the leading cluster (menu + journal + hint) is. */
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 8px;
+  padding: 10px var(--chrome-gutter);
+  padding-top: calc(10px + var(--safe-top));
+  padding-right: var(--chrome-end);
+  flex: none;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.chrome-leading {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--chrome-gutter);
+  min-width: 0;
+  justify-self: start;
+}
+
+.chrome-leading .icon-button {
+  flex: none;
+  margin: 0;
+}
+
+.chrome-titles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chrome-tabs {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  justify-content: center;
+  /* Prefer the previous ~360px control width; auto column sizing
+     would otherwise collapse it to the icons. */
+  width: min(360px, 100%);
+  min-width: 0;
+  justify-self: center;
+}
+
+#location-button {
+  grid-column: 3;
+  grid-row: 1;
+  margin: 0;
+  justify-self: end;
+}
+
+/* Narrow chrome: tabs drop to a second row; leading + location share the
+   top row. Use @media (not @container) so we can restyle .chrome-row
+   itself — a container cannot match its own size query. */
+@media (max-width: 560px) {
+  .chrome-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .chrome-tabs {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 0;
+    min-width: 100%;
+  }
+
+  #location-button {
+    grid-column: 2;
+  }
+}
+
+.journal-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--label-secondary);
+}
+
+.journal-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.journal-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--label-secondary);
+  user-select: none;
+  white-space: nowrap;
+  flex: none;
+}
+
+/* Always in the layout; fades paper → journal-name color after idle. */
+.save-hint {
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--paper);
+  transition: color 1s ease;
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.save-hint.is-visible {
+  color: var(--label-secondary);
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin: -6px;
+  color: var(--label-secondary);
+}
+
+.icon-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.icon-button.quiet {
+  color: var(--label-tertiary);
+}
+
+/* Location arrow states: filled when tagged, outline when untagged,
+   dimmed slash when the browser has denied us the position. */
+.icon-button[data-state="denied"] {
+  color: var(--label-tertiary);
+}
+
+.icon-button[data-state="tagged"] {
+  color: var(--label-secondary);
+}
+
+/* MARK: - Write mode */
+
+.writing {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/*
+ * "As little chrome as possible". The writing surface is permanently
+ * scrolled — the typewriter line sits far down a tall padded canvas — so a
+ * persistent scrollbar would sit on screen the entire time the app is open.
+ * iOS shows only a transient indicator; the web has no transient option, so
+ * the bar is hidden. Scrolling itself is untouched.
+ */
+.writing,
+.scroller,
+.sheet-body,
+.entry-reader {
+  scrollbar-width: none;
+}
+
+.writing::-webkit-scrollbar,
+.scroller::-webkit-scrollbar,
+.sheet-body::-webkit-scrollbar,
+.entry-reader::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.surface {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding-left: max(var(--inset), env(safe-area-inset-left));
+  padding-right: max(var(--inset), env(safe-area-inset-right));
+  /* padding-top / padding-bottom are set by the typewriter layout. */
+}
+
+.surface.is-clearing {
+  transform: translateY(-36px);
+  opacity: 0;
+  transition:
+    transform 0.45s ease-in,
+    opacity 0.45s ease-in;
+}
+
+.surface.is-restored {
+  transition: opacity 0.25s ease-out;
+}
+
+/* The uneditable entry stamp: same sans meta as the read header. */
+.stamp {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-bottom: 9px;
+  font-size: 13px;
+  min-width: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.stamp-publish {
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  border-radius: 6px;
+  margin-left: -6px;
+  padding: 4px 6px;
+}
+
+.stamp-publish:hover {
+  background: rgba(127, 127, 127, 0.08);
+}
+
+.publish-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--label-secondary);
+  transform: translateY(1px);
+}
+
+.publish-mark svg {
+  width: 14px;
+  height: 14px;
+}
+
+.stamp .entry-place {
+  min-width: 0;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+}
+
+/* The entry rolled over underneath the caret — a quiet nod, nothing more. */
+@keyframes stamp-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.stamp.is-new {
+  animation: stamp-in 0.5s ease-out;
+}
+
+.editor {
+  font-family: var(--serif);
+  font-size: var(--entry-size);
+  line-height: var(--entry-line);
+  color: var(--label);
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  caret-color: var(--accent);
+}
+
+.editor:empty::before,
+.editor > div:only-child:empty::before {
+  content: "";
+}
+
+/* MARK: - App menu */
+
+.app-menu {
+  position: fixed;
+  z-index: 12;
+  min-width: 198px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--fill-raised);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 0.5px solid var(--separator);
+}
+
+.app-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 15px;
+  text-align: left;
+  color: var(--label);
+}
+
+.app-menu button:hover,
+.app-menu button:focus-visible {
+  background: var(--fill-secondary);
+}
+
+.app-menu button:disabled {
+  opacity: 0.38;
+}
+
+.app-menu button svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--label-secondary);
+}
+
+/* MARK: - Media blocks */
+
+figure.media {
+  margin: 10px 0;
+  position: relative;
+  line-height: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+figure.media img,
+figure.media video {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: var(--media-cap, 60vh);
+  object-fit: contain;
+  border-radius: 6px;
+  background: var(--fill-secondary);
+}
+
+figure.media.is-selected img,
+figure.media.is-selected video {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.media-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.45));
+  pointer-events: none;
+}
+
+.media-play svg {
+  width: 44px;
+  height: 44px;
+}
+
+/* Quiet placeholder: the entry's shape is preserved, the record stays honest. */
+.media-missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 80px;
+  border-radius: 6px;
+  background: var(--fill-secondary);
+  color: var(--label-tertiary);
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.media-missing svg {
+  width: 16px;
+  height: 16px;
+}
+
+.media-pending {
+  height: 160px;
+  border-radius: 6px;
+  background: var(--fill-secondary);
+}
+
+/* MARK: - Read mode */
+
+.read-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--fill-secondary);
+}
+
+.segment {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 8px 24px;
+  border-radius: 7px;
+  color: var(--label-secondary);
+}
+
+.segment svg {
+  width: 16px;
+  height: 16px;
+}
+
+.segment.is-selected {
+  background: var(--fill-raised);
+  color: var(--label);
+  box-shadow: 0 1px 3px var(--shadow);
+}
+
+.scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.scroll-inner {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding-bottom: 32px;
+}
+
+.empty-state {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--label-tertiary);
+  font-size: 14px;
+}
+
+.day-header {
+  padding: 20px max(var(--inset), env(safe-area-inset-left)) 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label-secondary);
+}
+
+.entry-row {
+  padding: 10px max(var(--inset), env(safe-area-inset-left));
+  cursor: pointer;
+}
+
+.entry-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.entry-meta .publish-mark {
+  margin-right: 1px;
+}
+
+.entry-time {
+  font-weight: 500;
+  color: var(--label-secondary);
+}
+
+.entry-place {
+  color: var(--label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry-text {
+  font-family: var(--serif);
+  font-size: var(--entry-size);
+  line-height: 1.58;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.entry-row .entry-text {
+  overflow: hidden;
+  white-space: nowrap;
+  -webkit-mask-image: linear-gradient(to right, #000 90%, transparent);
+  mask-image: linear-gradient(to right, #000 90%, transparent);
+}
+
+.entry-reader {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--paper);
+}
+
+.entry-reader-inner {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 20px max(var(--inset), env(safe-area-inset-left)) 40px;
+  padding-right: max(var(--inset), env(safe-area-inset-right));
+}
+
+.media-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--label-tertiary);
+}
+
+.media-hint svg {
+  width: 12px;
+  height: 12px;
+}
+
+.entry-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* MARK: - Calendar heatmap */
+
+.calendar-months {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 16px max(var(--inset), env(safe-area-inset-right)) 32px
+    max(var(--inset), env(safe-area-inset-left));
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.month-title {
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label-secondary);
+}
+
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 5px;
+}
+
+.day-cell {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  font-family: var(--serif);
+  font-size: 15px;
+  background: var(--fill-secondary);
+  color: var(--label-secondary);
+  cursor: default;
+}
+
+.day-cell[data-level="1"] {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  cursor: pointer;
+}
+
+.day-cell[data-level="2"] {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.day-cell[data-level="3"] {
+  background: color-mix(in srgb, var(--accent) 90%, transparent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.day-cell.is-blank {
+  background: none;
+}
+
+/* MARK: - Map */
+
+.map {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--fill-secondary);
+  touch-action: none;
+  cursor: grab;
+}
+
+.map.is-panning {
+  cursor: grabbing;
+}
+
+.map-tiles {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.map-tiles img {
+  position: absolute;
+  width: 256px;
+  height: 256px;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .map-tiles {
+    filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9);
+  }
+}
+
+.map-pin {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 7px;
+  border-radius: 13px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+
+.map-pin svg {
+  width: 13px;
+  height: 13px;
+}
+
+.map-attribution {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: 2px 5px;
+  font-size: 10px;
+  background: var(--fill-raised);
+  color: var(--label-tertiary);
+}
+
+.map-attribution a {
+  color: inherit;
+}
+
+.map-zoom {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px var(--shadow);
+}
+
+.map-zoom button {
+  width: 30px;
+  height: 30px;
+  font-size: 17px;
+  background: var(--fill-raised);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  color: var(--label);
+}
+
+.map-zoom button + button {
+  border-top: 0.5px solid var(--separator);
+}
+
+/* MARK: - Sheets (journal picker, location picker, map entries) */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.32);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.scrim.is-open {
+  opacity: 1;
+}
+
+.sheet {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: min(560px, 100%);
+  max-height: 82dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -4px 24px var(--shadow);
+  transform: translate(-50%, 100%);
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.3, 1);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.scrim.is-open .sheet {
+  transform: translate(-50%, 0);
+}
+
+.scrim-modal {
+  display: grid;
+  place-items: center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+
+.modal {
+  position: relative;
+  width: min(360px, 100%);
+  max-height: min(72dvh, 520px);
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px var(--shadow);
+  opacity: 0;
+  transform: scale(0.94);
+  transition:
+    opacity 0.2s ease,
+    transform 0.22s cubic-bezier(0.22, 1, 0.3, 1);
+}
+
+.scrim.is-open .modal {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.modal .sheet-title {
+  justify-content: center;
+  padding: 16px 16px 8px;
+  position: relative;
+}
+
+.modal .sheet-back {
+  position: absolute;
+  left: 12px;
+}
+
+.modal .sheet-body {
+  padding: 0 12px 16px;
+}
+
+.modal .sheet-head:empty + .sheet-body {
+  padding-top: 16px;
+}
+
+.sheet-grabber {
+  flex: none;
+  width: 36px;
+  height: 5px;
+  margin: 8px auto;
+  border-radius: 3px;
+  background: var(--separator);
+}
+
+.sheet-title {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.sheet-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--accent);
+}
+
+.sheet-back svg {
+  width: 12px;
+  height: 12px;
+}
+
+.sheet-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 12px 16px;
+}
+
+.sheet-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 0 8px;
+  background: var(--paper);
+}
+
+.rows {
+  border-radius: 10px;
+  background: var(--fill-secondary);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  text-align: left;
+  font-size: 16px;
+}
+
+.row + .row {
+  border-top: 0.5px solid var(--separator);
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--label-secondary);
+}
+
+.row-trailing {
+  flex: none;
+  font-size: 13px;
+  color: var(--label-tertiary);
+}
+
+.row-check,
+.row-accent {
+  color: var(--accent);
+}
+
+.row-check svg,
+.row-accent svg {
+  width: 14px;
+  height: 14px;
+}
+
+.row-note {
+  padding: 14px;
+  font-size: 14px;
+  color: var(--label-tertiary);
+  text-align: center;
+}
+
+.sheet-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 32px;
+  text-align: center;
+}
+
+.sheet-message p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--label-secondary);
+  line-height: 1.45;
+}
+
+.sheet-message svg {
+  width: 24px;
+  height: 24px;
+  color: var(--label-tertiary);
+}
+
+/* Full-screen video playback. */
+.player {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: #000;
+}
+
+.player video {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.player-close {
+  position: absolute;
+  top: calc(12px + env(safe-area-inset-top));
+  left: 12px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.player-close svg {
+  width: 28px;
+  height: 28px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet,
+  .modal,
+  .scrim,
+  .surface {
+    transition-duration: 0.01ms;
+  }
+}
