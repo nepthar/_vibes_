@@ -145,7 +145,7 @@ const THEME_CSS = `/* Public published site — mirrors the private app theme. N
 @media (prefers-color-scheme: dark) {
   :root {
     --paper: #000;
-    --label: #fff;
+    --label: #ebebf5;
     --label-secondary: rgba(235, 235, 245, 0.6);
     --label-tertiary: rgba(235, 235, 245, 0.32);
     --separator: rgba(235, 235, 245, 0.16);
