@@ -78,13 +78,52 @@ describe('publishing', () => {
     const html = readFileSync(index, 'utf8');
     assert.match(html, /noindex/);
     assert.match(html, /alice/);
-    assert.match(html, /href="\/p\/alice\/styles\.css"/);
+    // The stylesheet is named for its own hash, since it is served immutable.
+    const theme = /href="\/p\/alice\/(styles\.[0-9a-f]{8}\.css)"/.exec(html);
+    assert.ok(theme, 'index links a content-hashed stylesheet');
+    assert.equal(existsSync(join(dataDir, 'published', 'alice', theme[1])), true);
+    assert.equal(existsSync(join(dataDir, 'published', 'alice', 'styles.css')), false);
     assert.match(html, /href="\/p\/alice\/2024-07-14-18-00"/);
     assert.doesNotMatch(html, /<script/i);
 
     const article = join(dataDir, 'published', 'alice', '2024-07-14-18-00.html');
     assert.equal(existsSync(article), true);
     assert.match(readFileSync(article, 'utf8'), /First/);
+  });
+
+  test('the list reads like the private one: day headers, time · place, first line', async () => {
+    const at = Date.now();
+    const today = store.commitEntry(userRow, {
+      id: uuid(),
+      journalId,
+      contents: text('Today’s line, the one the list shows.\nA second line it must not show.'),
+      createdAt: at,
+      lastInteractionAt: at,
+      timeZone: 'UTC',
+      location: {
+        granularity: 'city',
+        displayName: 'Oakland, CA',
+        latitude: 37.8,
+        longitude: -122.27,
+        isResolved: true,
+      },
+    }).entry;
+    store.setEntryPublished(userRow, today.id, true);
+    assert.equal((await publish.runPublishJob()).ok, true);
+
+    const html = readFileSync(join(dataDir, 'published', 'alice', 'index.html'), 'utf8');
+    // Day headers are dates, never "Today" — the page outlives the day it was
+    // written, and nothing rewrites it when tomorrow comes.
+    assert.match(html, /<h2 class="day-header">July 14, 2024<\/h2>/);
+    assert.match(html, /<h2 class="day-header">[A-Z][a-z]+ \d{1,2}, \d{4}<\/h2>/);
+    assert.doesNotMatch(html, /day-header">(Today|Yesterday)</);
+    assert.match(html, /<span class="entry-time">[\d:]+ [AP]M<\/span>/);
+    assert.match(html, /<span class="entry-place">Oakland, CA<\/span>/);
+    assert.match(html, /<p class="entry-text">Today’s line, the one the list shows\.<\/p>/);
+    assert.doesNotMatch(html, /second line it must not show/);
+    // Still a link per entry, and still no JavaScript.
+    assert.match(html, /<a class="entry-row" href="\/p\/alice\/2024-07-14-18-00">/);
+    assert.doesNotMatch(html, /<script/i);
   });
 
   test('unpublishing last entries deletes the tree', async () => {

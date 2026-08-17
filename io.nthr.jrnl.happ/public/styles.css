@@ -415,19 +415,7 @@ svg {
   -webkit-user-select: none;
 }
 
-.stamp-publish {
-  text-align: left;
-  width: 100%;
-  cursor: pointer;
-  border-radius: 6px;
-  margin-left: -6px;
-  padding: 4px 6px;
-}
-
-.stamp-publish:hover {
-  background: rgba(127, 127, 127, 0.08);
-}
-
+/* Public or private, on every entry: an open eye or a struck-through one. */
 .publish-mark {
   flex: none;
   display: inline-flex;
@@ -439,6 +427,32 @@ svg {
 .publish-mark svg {
   width: 14px;
   height: 14px;
+}
+
+/* On a list row the same mark is the switch. Padding gives the finger
+   something to hit; the matching negative margin keeps the row exactly as
+   tall as it was without it. The target stops at the icon's own edges — the
+   rest of the row opens the entry, and an invisible halo over it would turn
+   a missed tap into an accidental publish. */
+.publish-toggle {
+  cursor: pointer;
+  border-radius: 6px;
+  margin: -6px 1px -6px -6px;
+  padding: 6px;
+  color: var(--label-secondary);
+}
+
+.publish-toggle:hover {
+  background: rgba(127, 127, 127, 0.08);
+  color: var(--label);
+}
+
+.publish-toggle[aria-pressed='true'] {
+  color: var(--accent);
+}
+
+.publish-toggle:disabled {
+  opacity: 0.5;
 }
 
 .stamp .entry-place {
@@ -671,13 +685,12 @@ figure.media.is-selected video {
   font-size: 13px;
 }
 
-.entry-meta .publish-mark {
-  margin-right: 1px;
-}
-
 .entry-time {
   font-weight: 500;
   color: var(--label-secondary);
+  /* A clock reading never breaks across lines, however narrow the screen —
+     the place name beside it is what gives way. */
+  white-space: nowrap;
 }
 
 .entry-place {

@@ -169,8 +169,10 @@ async function servePublished(res, pathname) {
     try {
       const info = await stat(candidate);
       if (info.isFile()) {
-        // HTML trees are rewritten on each publish job (index lists change);
-        // media/css under a slug are content-addressed and stable.
+        // HTML trees are rewritten on each publish job (index lists change).
+        // Everything else is addressed by content — media by asset id, the
+        // stylesheet by a hash of itself — so a year of immutable caching is
+        // a promise the names can keep.
         const cacheControl = /\.html$/i.test(candidate)
           ? 'public, max-age=60'
           : undefined;

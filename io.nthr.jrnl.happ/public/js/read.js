@@ -2,36 +2,83 @@ import { dayLabel, entryStamp, mediaCount, monthLabel, plainText, startOfDay, ti
 import { icon } from './icons.js';
 import { mediaFigure } from './media.js';
 import { MiniMap } from './minimap.js';
-import { closeSheet, openSheet, row, rowGroup } from './sheet.js';
+import { closeSheet, openSheet } from './sheet.js';
 
 /**
  * Read mode: the active journal's closed entries as a list, a
  * calendar heatmap, or a map. Entries are read-only — no edit, no delete, no
- * swipe actions anywhere. Publishing is the one exception: open an entry and
- * tap its title stamp.
+ * swipe actions anywhere. Publishing is the one exception, and it lives in
+ * the list: tap a row's eye to flip it public or private. The open article
+ * only reports the state it is in.
  */
 
-/** Published marker shown as a prefix on the first line the owner sees. */
-function publishMark() {
+/**
+ * Every entry wears its state, published or not: an open eye is public, a
+ * struck-through eye is private. Absence used to mean private, which only
+ * reads as an answer once you know the icon exists at all.
+ */
+const publishLabel = (published) => (published ? 'Public' : 'Private');
+const publishIcon = (published) => icon(published ? 'eye-outline' : 'eye-off-outline');
+
+/** The state alone, for the open article: it reports, it does not change. */
+function publishMark(entry) {
   const mark = document.createElement('span');
   mark.className = 'publish-mark';
-  mark.setAttribute('aria-label', 'Published');
-  mark.innerHTML = icon('web');
+  mark.setAttribute('aria-label', publishLabel(entry.published));
+  mark.innerHTML = publishIcon(entry.published);
   return mark;
 }
 
 /**
- * One list row. Time, place, a one-line preview that fades out at the
- * edge, and a media hint. Tapping opens the entry in the reader overlay.
+ * The same state on a list row, where it is also the switch — the one place
+ * an entry changes hands between private and public. One tap flips it, and
+ * the tap stops there: the row underneath opens the entry, and these are not
+ * the same gesture.
  */
-function entryRow(entry, { onSelect }) {
+function publishToggle(entry, onToggle) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'publish-mark publish-toggle';
+  button.setAttribute('aria-pressed', String(!!entry.published));
+  const label = `${publishLabel(entry.published)} — tap to make ${
+    entry.published ? 'private' : 'public'
+  }`;
+  button.setAttribute('aria-label', label);
+  button.title = label;
+  button.innerHTML = publishIcon(entry.published);
+  button.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    // The list repaints on success, replacing this button; disabling it
+    // meanwhile is what keeps a double tap from firing two writes.
+    button.disabled = true;
+    try {
+      await onToggle(entry, !entry.published);
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return button;
+}
+
+/**
+ * One list row: public/private state, time, place, a one-line preview that
+ * fades out at the edge, and a media hint. Tapping anywhere but the state
+ * opens the entry in the reader overlay.
+ *
+ * The state is a switch only with `onSetPublished` — that is, in the list,
+ * which repaints when an entry changes. The map's pin sheet gets the same row
+ * without one, since nothing would repaint it and the eye would sit there
+ * lying about what it just did.
+ */
+function entryRow(entry, { onSelect, onSetPublished }) {
   const element = document.createElement('article');
   element.className = 'entry-row';
   element.dataset.entryId = entry.id;
 
   const meta = document.createElement('div');
   meta.className = 'entry-meta';
-  if (entry.published) meta.append(publishMark());
+  meta.append(onSetPublished ? publishToggle(entry, onSetPublished) : publishMark(entry));
   const time = document.createElement('span');
   time.className = 'entry-time';
   time.textContent = timeLabel(new Date(entry.createdAt));
@@ -112,7 +159,9 @@ export class ReadView {
         });
       }
     }
-    this.render();
+    // An update is a repaint of what is already on screen — flipping an entry
+    // public should not throw the reader back to the top of the journal.
+    this.render({ preserveScroll: true });
     if (this.openId) {
       const entry = this.entries.find((item) => item.id === this.openId);
       if (entry) this.paintReader(entry);
@@ -125,14 +174,23 @@ export class ReadView {
     this.render();
   }
 
-  render() {
+  render({ preserveScroll = false } = {}) {
     this.map?.destroy();
     this.map = null;
+    const scrollTop = preserveScroll ? (this.container.querySelector('.scroller')?.scrollTop ?? 0) : 0;
     this.container.replaceChildren();
 
     if (this.view === 'calendar') return this.renderCalendar();
     if (this.view === 'map') return this.renderMap();
-    return this.renderList();
+    return this.renderList(scrollTop);
+  }
+
+  /** One list row, wired to open the entry and to flip its public/private state. */
+  listRow(entry) {
+    return entryRow(entry, {
+      onSelect: (item) => this.openEntry(item),
+      onSetPublished: (item, published) => this.onSetPublished?.(item, published),
+    });
   }
 
   openEntry(entry) {
@@ -153,44 +211,14 @@ export class ReadView {
     return true;
   }
 
-  /** Title stamp → Publish? Yes publishes, No unpublishes. Esc / backdrop cancel. */
-  promptPublish(entry) {
-    openSheet(
-      (sheet) => {
-        sheet.setTitle('Publish?');
-        sheet.body.append(
-          rowGroup([
-            row({
-              title: 'Yes',
-              onSelect: () => {
-                closeSheet();
-                this.onSetPublished?.(entry, true);
-              },
-            }),
-            row({
-              title: 'No',
-              onSelect: () => {
-                closeSheet();
-                this.onSetPublished?.(entry, false);
-              },
-            }),
-          ])
-        );
-      },
-      { presentation: 'modal' }
-    );
-  }
-
   paintReader(entry) {
     const date = new Date(entry.createdAt);
     const inner = document.createElement('div');
     inner.className = 'entry-reader-inner';
 
-    const stamp = document.createElement('button');
-    stamp.type = 'button';
-    stamp.className = 'stamp stamp-publish';
-    stamp.title = 'Publish or unpublish';
-    if (entry.published) stamp.append(publishMark());
+    const stamp = document.createElement('div');
+    stamp.className = 'stamp';
+    stamp.append(publishMark(entry));
     const time = document.createElement('span');
     time.className = 'entry-time';
     time.textContent = timeLabel(date);
@@ -203,10 +231,6 @@ export class ReadView {
     rest.className = 'entry-place';
     rest.textContent = line;
     stamp.append(dot, rest);
-    stamp.addEventListener('click', (event) => {
-      event.preventDefault();
-      this.promptPublish(entry);
-    });
 
     const body = document.createElement('div');
     body.className = 'entry-body';
@@ -227,7 +251,7 @@ export class ReadView {
     return [...groups.entries()].sort((a, b) => b[0] - a[0]);
   }
 
-  renderList() {
+  renderList(scrollTop = 0) {
     if (this.entries.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
@@ -249,11 +273,12 @@ export class ReadView {
       header.dataset.day = String(day);
       inner.append(header);
       for (const entry of entries) {
-        inner.append(entryRow(entry, { onSelect: (item) => this.openEntry(item) }));
+        inner.append(this.listRow(entry));
       }
     }
 
     this.container.append(scroller);
+    scroller.scrollTop = scrollTop;
 
     // Calendar drill-down: land with the tapped day's header at top.
     if (this.scrollTargetDay !== null) {

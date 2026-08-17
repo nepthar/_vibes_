@@ -1,4 +1,5 @@
 import { copyFile, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { db, mediaDir, now, publishedDir } from './db.js';
 
@@ -59,16 +60,44 @@ const ORDINALS = new Intl.PluralRules('en', { type: 'ordinal' });
 const SUFFIXES = { one: 'st', two: 'nd', few: 'rd', other: 'th' };
 const ordinal = (number) => `${number}${SUFFIXES[ORDINALS.select(number)] ?? 'th'}`;
 
+/** Every rendered date is in the entry's own zone: the wall clock the writer saw. */
+const zoneOf = (timeZoneId) =>
+  timeZoneId && String(timeZoneId).trim() ? String(timeZoneId) : 'UTC';
+
+function zoneFormat(zone, options) {
+  try {
+    return new Intl.DateTimeFormat('en', { timeZone: zone, ...options });
+  } catch {
+    return new Intl.DateTimeFormat('en', { timeZone: 'UTC', ...options });
+  }
+}
+
+/** `YYYY-MM-DD` in `zone`, the key entries are grouped by. */
+function dayKey(ms, zone) {
+  const parts = zoneFormat(zone, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(ms));
+  const part = (type) => parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+/**
+ * The day header, always the full date. The private list says "Today" and
+ * "Yesterday" because it is rendered in front of a reader; a page written
+ * once and read for years cannot say when now is.
+ */
+const dayHeading = (ms, zone) =>
+  zoneFormat(zone, { month: 'long', day: 'numeric', year: 'numeric' }).format(new Date(ms));
+
+const timeLabel = (ms, zone) =>
+  zoneFormat(zone, { hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
+
 /** Title line in the entry's own zone — matches the private app stamp. */
 function entryTitle(createdAt, timeZoneId, place) {
-  const zone = timeZoneId && String(timeZoneId).trim() ? String(timeZoneId) : 'UTC';
-  const format = (options) => {
-    try {
-      return new Intl.DateTimeFormat('en', { timeZone: zone, ...options });
-    } catch {
-      return new Intl.DateTimeFormat('en', { timeZone: 'UTC', ...options });
-    }
-  };
+  const zone = zoneOf(timeZoneId);
+  const format = (options) => zoneFormat(zone, options);
   const date = new Date(createdAt);
   const weekday = format({ weekday: 'long' }).format(date);
   const month = format({ month: 'long' }).format(date);
@@ -80,6 +109,23 @@ function entryTitle(createdAt, timeZoneId, place) {
   );
   const stamp = `${weekday}, ${month} ${ordinal(day)}, ${year}`;
   return place ? `${stamp} ~ ${place}` : stamp;
+}
+
+/**
+ * The one line of an entry the list shows: its first non-empty line of text,
+ * capped so a long paragraph doesn't travel into the index. What fits is then
+ * a matter of the reader's screen — the row fades it out at the edge.
+ */
+function previewLine(blocks) {
+  for (const block of blocks) {
+    if (block.kind !== 'text') continue;
+    const line = (block.text ?? '')
+      .split('\n')
+      .map((part) => part.trim())
+      .find(Boolean);
+    if (line) return line.length > 200 ? line.slice(0, 200) : line;
+  }
+  return '';
 }
 
 const THEME_CSS = `/* Public published site — mirrors the private app theme. No JavaScript. */
@@ -129,15 +175,54 @@ a:hover { text-decoration: underline; }
   font-weight: 600;
   letter-spacing: -0.02em;
 }
-.entry-list { list-style: none; margin: 0; padding: 0; }
-.entry-list li { border-top: 1px solid var(--separator); }
-.entry-list a {
-  display: block;
-  padding: 14px 0;
-  font-size: 15px;
-  line-height: 1.45;
+/* The list mirrors the private app's read list: a quiet day header, then one
+   row per entry — time and place above, the entry's first line below. */
+.day-header {
+  margin: 20px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label-secondary);
 }
-.entry-list a:hover { text-decoration: none; opacity: 0.72; }
+.day-header:first-of-type { margin-top: 0; }
+.entry-row {
+  display: block;
+  padding: 10px 0;
+}
+.entry-row:hover { text-decoration: none; opacity: 0.72; }
+.entry-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.entry-time {
+  font-weight: 500;
+  color: var(--label-secondary);
+  white-space: nowrap;
+}
+.entry-place {
+  color: var(--label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.entry-text {
+  font-family: var(--serif);
+  font-size: var(--entry-size);
+  line-height: 1.58;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  -webkit-mask-image: linear-gradient(to right, #000 90%, transparent);
+  mask-image: linear-gradient(to right, #000 90%, transparent);
+}
+.media-hint {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--label-tertiary);
+}
 .stamp {
   margin: 0 0 18px;
   font-size: 13px;
@@ -171,6 +256,14 @@ a:hover { text-decoration: underline; }
 .empty { color: var(--label-tertiary); }
 `;
 
+/**
+ * The stylesheet carries a hash of itself in its name. Published files are
+ * served `immutable` for a year, which is only true of a name that changes
+ * when the bytes do — a fixed `styles.css` would leave every reader who has
+ * ever loaded the site with a stale theme and no way to ask for a new one.
+ */
+const THEME_FILE = `styles.${createHash('sha256').update(THEME_CSS).digest('hex').slice(0, 8)}.css`;
+
 function pageShell({ title, body, siteBase }) {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -179,7 +272,7 @@ function pageShell({ title, body, siteBase }) {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>${escapeHtml(title)}</title>
-<link rel="stylesheet" href="${escapeAttr(`${siteBase}/styles.css`)}" />
+<link rel="stylesheet" href="${escapeAttr(`${siteBase}/${THEME_FILE}`)}" />
 </head>
 <body>
 <div class="site">
@@ -257,7 +350,7 @@ async function rebuildUser(user) {
 
   try {
     await mkdir(staging, { recursive: true });
-    await writeFile(join(staging, 'styles.css'), THEME_CSS);
+    await writeFile(join(staging, THEME_FILE), THEME_CSS);
 
     const siteBase = `/p/${username}`;
     const mediaOutDir = join(staging, 'media');
@@ -270,6 +363,7 @@ async function rebuildUser(user) {
         continue;
       }
       const blocks = q.blocksFor.all(row.id);
+      const zone = zoneOf(row.time_zone_id);
       const title = entryTitle(row.created_at, row.time_zone_id, row.loc_display_name);
       const bodyHtml = await renderBlocks(
         user.id,
@@ -286,7 +380,15 @@ ${bodyHtml || '<p class="empty"></p>'}
         join(staging, `${slug}.html`),
         pageShell({ title: `${title} · ${username}`, body: articleBody, siteBase })
       );
-      articles.push({ slug, title });
+      articles.push({
+        slug,
+        title,
+        zone,
+        createdAt: row.created_at,
+        place: row.loc_display_name ?? '',
+        preview: previewLine(blocks),
+        mediaCount: blocks.filter((block) => block.kind === 'media').length,
+      });
     }
 
     if (articles.length === 0) {
@@ -295,17 +397,40 @@ ${bodyHtml || '<p class="empty"></p>'}
       return;
     }
 
-    const listItems = articles
-      .map(
-        (article) =>
-          `<li><a href="${escapeAttr(`${siteBase}/${article.slug}`)}">${escapeHtml(article.title)}</a></li>`
-      )
+    // Entries arrive newest first; a Map keeps the days in that order.
+    const days = new Map();
+    for (const article of articles) {
+      const key = dayKey(article.createdAt, article.zone);
+      if (!days.has(key)) days.set(key, []);
+      days.get(key).push(article);
+    }
+
+    const listBody = [...days.values()]
+      .map((group) => {
+        const heading = dayHeading(group[0].createdAt, group[0].zone);
+        const rows = group.map((article) => {
+          const place = article.place
+            ? `<span class="entry-place">·</span><span class="entry-place">${escapeHtml(article.place)}</span>`
+            : '';
+          const hint =
+            article.mediaCount > 0
+              ? `\n<span class="media-hint">${article.mediaCount === 1 ? '1 item' : `${article.mediaCount} items`}</span>`
+              : '';
+          // An entry that is nothing but pictures has no line to show; the
+          // media hint is the whole of what the row says about it.
+          const preview = article.preview
+            ? `\n<p class="entry-text">${escapeHtml(article.preview)}</p>`
+            : '';
+          return `<a class="entry-row" href="${escapeAttr(`${siteBase}/${article.slug}`)}">
+<div class="entry-meta"><span class="entry-time">${escapeHtml(timeLabel(article.createdAt, article.zone))}</span>${place}</div>${preview}${hint}
+</a>`;
+        });
+        return `<h2 class="day-header">${escapeHtml(heading)}</h2>\n${rows.join('\n')}`;
+      })
       .join('\n');
 
     const indexBody = `<h1 class="site-title">${escapeHtml(username)}</h1>
-<ul class="entry-list">
-${listItems}
-</ul>`;
+${listBody}`;
     await writeFile(
       join(staging, 'index.html'),
       pageShell({ title: username, body: indexBody, siteBase })

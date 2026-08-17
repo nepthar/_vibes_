@@ -531,7 +531,7 @@ class App {
     }
   }
 
-  /** Owner toggled publish from the reader title stamp. */
+  /** Owner flipped a list row between public and private. */
   async setPublished(entry, published) {
     try {
       const { entry: updated } = await api.setPublished(entry.id, published);
