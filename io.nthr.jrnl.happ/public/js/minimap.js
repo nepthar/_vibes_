@@ -13,6 +13,25 @@ const MAX_ZOOM = 18;
 /** Entries closer together than this on screen merge into one cluster. */
 const CLUSTER_PX = 56;
 
+/**
+ * Wheel zoom is metered rather than counted. A mouse spends a whole notch per
+ * event, but a trackpad reports a stream of small deltas — dozens for one
+ * two-finger flick — and a level per event crosses the entire zoom range
+ * before the fingers lift. So deltas accumulate and buy a level each time they
+ * add up to a notch's worth, which leaves a mouse click-stop at exactly one
+ * level and makes a trackpad swipe worth one or two.
+ */
+const WHEEL_NOTCH = 100;
+/** Wheel deltas in lines/pages, as Firefox and some mice report them. */
+const DELTA_PX = [1, 40, 400];
+/** A pinch arrives as ctrl+wheel with much smaller numbers than a scroll. */
+const PINCH_GAIN = 8;
+/** Quiet for this long and the next wheel event starts a fresh gesture. */
+const GESTURE_GAP_MS = 200;
+
+const wheelPixels = (event) =>
+  event.deltaY * (DELTA_PX[event.deltaMode] ?? 1) * (event.ctrlKey ? PINCH_GAIN : 1);
+
 const worldSize = (zoom) => TILE * 2 ** zoom;
 
 function project(lat, lon, zoom) {
@@ -168,12 +187,32 @@ export class MiniMap {
     this.container.addEventListener('pointerup', end);
     this.container.addEventListener('pointercancel', end);
 
+    let wheelDelta = 0;
+    let wheelAt = 0;
+
     this.container.addEventListener(
       'wheel',
       (event) => {
         event.preventDefault();
+        const step = wheelPixels(event);
+        // A pause or a change of direction starts the count over, so leftover
+        // delta from the last gesture can't tip the first event of the next.
+        if (
+          event.timeStamp - wheelAt > GESTURE_GAP_MS ||
+          Math.sign(step) !== Math.sign(wheelDelta)
+        ) {
+          wheelDelta = 0;
+        }
+        wheelAt = event.timeStamp;
+        wheelDelta += step;
+
+        const levels = Math.trunc(wheelDelta / WHEEL_NOTCH);
+        if (!levels) return;
+        wheelDelta -= levels * WHEEL_NOTCH;
+
         const bounds = this.container.getBoundingClientRect();
-        this.setZoom(this.zoom + (event.deltaY < 0 ? 1 : -1), {
+        // Scrolling up (negative delta) zooms in.
+        this.setZoom(this.zoom - levels, {
           x: event.clientX - bounds.left,
           y: event.clientY - bounds.top,
         });
