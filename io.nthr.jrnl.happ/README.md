@@ -89,3 +89,11 @@ The published URL is `jrnl.<your-domain>`; set the `host` config to match. Data
 lands in harbor's data volume. Mint the first token with the `account-token`
 command against a running container, or locally with `JRNL_DATA` pointed at
 that volume.
+
+Every tunable above — plus the entry-lifecycle timings and the geocoding queue
+— is a `[config]` param with the code's own default, so nothing has to be set:
+
+```bash
+harbor config jrnl                    # list them, with descriptions
+harbor config jrnl --set auth_rps=2
+```

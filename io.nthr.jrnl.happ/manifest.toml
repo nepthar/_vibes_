@@ -9,9 +9,27 @@ display_name = "Jrnl"
 description  = "A quiet personal journal: typewriter writing, location tags, list / calendar / map"
 subdomain    = "jrnl"
 
+# Every value here maps to one JRNL_* env var below, and every default is the
+# one the code falls back to on its own — an unset or empty value is safe.
 [config]
 # Shown to Nominatim / Overpass; identify your instance before a public deploy.
-geo_ua = { desc = "User-Agent for geocoding requests", default = "Jrnl/1.0 (self-hosted harbor app)" }
+geo_ua = { desc = "User-Agent sent with geocoding requests; identify your instance before a public deploy", default = "Jrnl/1.0 (self-hosted harbor app)" }
+
+# Rate limiting. One bucket covers every request, static files included;
+# credential checks get a second, much tighter one on top of it.
+rate_rps   = { desc = "Requests per second for the whole process, static files included; 30 carries ten devices writing at once", default = "30" }
+rate_burst = { desc = "Requests allowed above rate_rps in a burst, which is what a cold page load is", default = "80" }
+auth_rps   = { desc = "Sign-in and account-token attempts per second, for the whole process; one costs a human nothing and puts password guessing into the range of years", default = "1" }
+auth_burst = { desc = "Credential attempts allowed in a burst", default = "1" }
+geo_queue  = { desc = "Geocoding requests in flight at once; past this the answer is an immediate 429 rather than a queue that turns a burst into minutes of latency", default = "10" }
+
+# The entry lifecycle. The server ships these to the client on boot, so the
+# policy still lives in one place.
+timeout_ms        = { desc = "Milliseconds of quiet before an entry is finished and committed to the journal", default = "120000" }
+draft_debounce_ms = { desc = "Milliseconds after a keystroke before writing in progress is posted to the server", default = "800" }
+janitor_ms        = { desc = "Milliseconds between janitor passes, which commit drafts whose deadline passed while a tab was away", default = "30000" }
+orphan_ms         = { desc = "Milliseconds before a draft carrying no finalize deadline is swept up anyway", default = "86400000" }
+publish_ms        = { desc = "Milliseconds between rebuilds of the static pages for published entries", default = "300000" }
 
 [volumes]
 server  = { kind = "app", src = "server", desc = "HTTP API and static file server" }
@@ -29,9 +47,21 @@ volumes = { server = "/app/server", public = "/app/public", scripts = "/app/scri
 main = { port = "8787" }
 
 [run.main.env]
-JRNL_DATA    = "/data"
-JRNL_HOST    = "${routes.main}"
-JRNL_GEO_UA  = "${geo_ua}"
+# Pinned by the deployment, not configurable: the data volume and the Host guard.
+JRNL_DATA = "/data"
+JRNL_HOST = "${routes.main}"
+
+JRNL_GEO_UA            = "${geo_ua}"
+JRNL_RATE_RPS          = "${rate_rps}"
+JRNL_RATE_BURST        = "${rate_burst}"
+JRNL_AUTH_RPS          = "${auth_rps}"
+JRNL_AUTH_BURST        = "${auth_burst}"
+JRNL_GEO_QUEUE         = "${geo_queue}"
+JRNL_TIMEOUT_MS        = "${timeout_ms}"
+JRNL_DRAFT_DEBOUNCE_MS = "${draft_debounce_ms}"
+JRNL_JANITOR_MS        = "${janitor_ms}"
+JRNL_ORPHAN_MS         = "${orphan_ms}"
+JRNL_PUBLISH_MS        = "${publish_ms}"
 
 [commands]
 account-token = { cmd = ["node", "/app/scripts/account-token.js"], desc = "Mint a one-time token for a username: creates that account, or resets it if it exists" }
