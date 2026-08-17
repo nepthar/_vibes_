@@ -22,6 +22,7 @@ const dom = {
   authUsername: $('auth-username'),
   authPassword: $('auth-password'),
   authToken: $('auth-token'),
+  authSub: $('auth-sub'),
   authError: $('auth-error'),
   authSubmit: $('auth-submit'),
   authToggle: $('auth-toggle'),
@@ -87,53 +88,101 @@ function trackViewport() {
   window.addEventListener('resize', apply);
 }
 
-// MARK: - Sign in / sign up
+// MARK: - Sign in / account setup
 
+/**
+ * One card, three screens. `login` is the door. `token` takes the account
+ * token the operator minted, and `setup` is where the name that token carries
+ * gets a password — a new account if there is none under that name yet, a
+ * reset of the existing one if there is. The person never types the username:
+ * it came with the token, and setup only shows it.
+ */
 let mode = 'login';
+
+/** The token being redeemed, as `/account/lookup` reported it. */
+let pending = null;
 
 function showAuth(message = '') {
   dom.shell.hidden = true;
   dom.auth.hidden = false;
+  pending = null;
+  setAuthMode('login');
   dom.authError.textContent = message;
-  dom.authPassword.value = '';
-  // Programmatic focus on iOS pans the visual viewport; with overflow:hidden
-  // on the document that pan can leave the user staring at blank paper.
-  // The keyboard will not rise without a tap anyway.
-  if (!window.matchMedia('(pointer: coarse)').matches) {
-    dom.authUsername.focus({ preventScroll: true });
-  }
 }
 
 function setAuthMode(next) {
   mode = next;
-  const signingUp = mode === 'signup';
-  dom.authSubmit.textContent = signingUp ? 'Create account' : 'Sign in';
-  dom.authSwitchLead.textContent = signingUp
-    ? 'Already have an account?'
-    : 'Have a signup token?';
-  dom.authToggle.textContent = signingUp ? 'Sign in' : 'Create an account';
-  dom.authPassword.autocomplete = signingUp ? 'new-password' : 'current-password';
-  dom.authToken.hidden = !signingUp;
-  dom.authToken.required = signingUp;
-  if (!signingUp) dom.authToken.value = '';
-  document.querySelector('.auth-sub').textContent = signingUp
-    ? 'A name, a password, and a signup token from whoever runs this.'
-    : 'Sign in with the username and password you made.';
+  const asking = mode === 'token'; // asking for the account token
+  const setting = mode === 'setup'; // setting the password it leads to
+
+  dom.authUsername.hidden = asking;
+  dom.authUsername.required = !asking;
+  // In setup the name is the token's, not a choice — shown, not editable.
+  dom.authUsername.readOnly = setting;
+  dom.authUsername.value = setting ? pending.username : '';
+  dom.authPassword.hidden = asking;
+  dom.authPassword.required = !asking;
+  dom.authPassword.value = '';
+  dom.authPassword.autocomplete = setting ? 'new-password' : 'current-password';
+  dom.authToken.hidden = !asking;
+  dom.authToken.required = asking;
+  // The token stays in the field through setup; it is what redeems it.
+  if (!setting) dom.authToken.value = '';
+
+  if (asking) {
+    dom.authSub.textContent = 'Enter the account token you were given.';
+    dom.authSubmit.textContent = 'Continue';
+    dom.authSwitchLead.textContent = 'Already set up?';
+    dom.authToggle.textContent = 'Sign in';
+  } else if (setting) {
+    dom.authSub.textContent = pending.exists
+      ? 'This resets the account: a new password, and every signed-in device signed out. Entries are untouched.'
+      : 'Choose a password and the account is yours.';
+    dom.authSubmit.textContent = pending.exists ? 'Reset account' : 'Create account';
+    dom.authSwitchLead.textContent = 'Wrong token?';
+    dom.authToggle.textContent = 'Start over';
+  } else {
+    dom.authSub.textContent = 'Sign in with the username and password you made.';
+    dom.authSubmit.textContent = 'Sign in';
+    dom.authSwitchLead.textContent = 'Have an account token?';
+    dom.authToggle.textContent = 'Set up an account';
+  }
   dom.authError.textContent = '';
+
+  // Programmatic focus on iOS pans the visual viewport; with overflow:hidden
+  // on the document that pan can leave the user staring at blank paper.
+  // The keyboard will not rise without a tap anyway.
+  if (!window.matchMedia('(pointer: coarse)').matches) {
+    const field = asking ? dom.authToken : setting ? dom.authPassword : dom.authUsername;
+    field.focus({ preventScroll: true });
+  }
 }
 
-dom.authToggle.addEventListener('click', () => setAuthMode(mode === 'signup' ? 'login' : 'signup'));
+// From sign-in the link opens setup; from either setup step it goes back one:
+// the password screen to the token it came from, the token screen to sign-in.
+dom.authToggle.addEventListener('click', () => {
+  const next = mode === 'token' ? 'login' : 'token';
+  pending = null;
+  setAuthMode(next);
+});
 
 dom.authForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const username = dom.authUsername.value.trim();
-  const password = dom.authPassword.value;
   dom.authSubmit.disabled = true;
   dom.authError.textContent = '';
+  const accountToken = dom.authToken.value.trim();
   try {
-    const result = await (mode === 'signup'
-      ? api.signup(username, password, dom.authToken.value.trim())
-      : api.login(username, password));
+    if (mode === 'token') {
+      // The token names the account; setup only has a password left to ask for.
+      pending = await api.accountToken(accountToken);
+      setAuthMode('setup');
+      return;
+    }
+    const password = dom.authPassword.value;
+    const result =
+      mode === 'setup'
+        ? await api.setUpAccount(accountToken, password)
+        : await api.login(dom.authUsername.value.trim(), password);
     setToken(result.token);
     dom.auth.hidden = true;
     await start();
@@ -769,7 +818,6 @@ async function start() {
 
 try {
   trackViewport();
-  setAuthMode('login');
 
   if (hasToken()) {
     start().catch((error) => {

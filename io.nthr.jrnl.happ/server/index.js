@@ -4,7 +4,15 @@ import { stat } from 'node:fs/promises';
 import { dirname, join, normalize, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ApiError, atLeast, notFound, readJSON, sendJSON, tooManyRequests } from './http.js';
-import { authenticate, login, logout, publicUser, signup, tokenFrom } from './auth.js';
+import {
+  authenticate,
+  login,
+  logout,
+  lookupAccountToken,
+  publicUser,
+  setUpAccount,
+  tokenFrom,
+} from './auth.js';
 import * as store from './entries.js';
 import * as geo from './geo.js';
 import { serveMedia, uploadMedia } from './media.js';
@@ -28,6 +36,9 @@ const PINNED = EXPECTED_HOST.toLowerCase() !== ANY_HOST;
  * for which usernames exist on this instance.
  */
 const AUTH_FLOOR_MS = 150;
+
+/** The endpoints that take a secret without a session behind it. */
+const CREDENTIAL_PATHS = new Set(['/login', '/account/lookup', '/account/setup']);
 
 /**
  * Same trick for geocoding. The cache is shared across users by design, so a
@@ -226,13 +237,18 @@ async function handleAPI(req, res, url) {
 
   // Unauthenticated credential checks. These are the only endpoints an
   // attacker can hammer without an account, so they get their own bucket and
-  // a fixed response time on top of the global limit.
-  if (method === 'POST' && (path === '/signup' || path === '/login')) {
+  // a fixed response time on top of the global limit. The account-token pair
+  // belongs here too: both take a secret handed out by the operator, and
+  // `/account/lookup` answers with a username, so it is metered and padded
+  // exactly like a password guess.
+  if (method === 'POST' && CREDENTIAL_PATHS.has(path)) {
     if (!authLimiter.take()) throw tooManyRequests('Too many attempts');
     const body = await readJSON(req);
-    const result = await atLeast(AUTH_FLOOR_MS, () =>
-      path === '/signup' ? signup(body) : login(body)
-    );
+    const result = await atLeast(AUTH_FLOOR_MS, async () => {
+      if (path === '/login') return login(body);
+      if (path === '/account/lookup') return lookupAccountToken(body.accountToken);
+      return setUpAccount(body);
+    });
     return sendJSON(res, 200, result);
   }
 

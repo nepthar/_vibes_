@@ -78,7 +78,7 @@ async function request(method, path, { body, headers = {}, raw } = {}) {
   if (response.status === 401) {
     const detail = await response.json().catch(() => ({}));
     // Login's 401 is "those credentials are wrong", not a dropped session.
-    if (path === '/login' || path === '/signup') {
+    if (path === '/login') {
       throw new Error(detail.error ?? 'Invalid username or password');
     }
     setToken(null);
@@ -94,8 +94,14 @@ async function request(method, path, { body, headers = {}, raw } = {}) {
 const json = async (...args) => (await request(...args)).json();
 
 export const api = {
-  signup: (username, password, signupToken) =>
-    json('POST', '/signup', { body: { username, password, signupToken } }),
+  /**
+   * An account token carries the username it was minted for: reading it back
+   * says whose account is about to be set up, and whether that account already
+   * exists (a reset) or not (a new one). Redeeming it is the second call.
+   */
+  accountToken: (accountToken) => json('POST', '/account/lookup', { body: { accountToken } }),
+  setUpAccount: (accountToken, password) =>
+    json('POST', '/account/setup', { body: { accountToken, password } }),
   login: (username, password) => json('POST', '/login', { body: { username, password } }),
   logout: () => json('POST', '/logout').catch(() => {}),
 

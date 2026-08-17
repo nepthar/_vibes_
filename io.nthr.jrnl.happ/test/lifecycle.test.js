@@ -19,8 +19,10 @@ process.on('exit', () => rmSync(dataDir, { recursive: true, force: true }));
 
 let db;
 let store;
-let signup;
-let createSignupToken;
+let setUpAccount;
+let createAccountToken;
+let lookupAccountToken;
+let login;
 let userRow;
 let journalId;
 
@@ -37,8 +39,8 @@ const user = () => db.prepare('SELECT * FROM users WHERE id = ?').get(userRow.id
 const uuid = () => crypto.randomUUID();
 
 async function freshUser(name) {
-  const { token } = createSignupToken();
-  const result = await signup({ username: name, password: 'notebook123', signupToken: token });
+  const { token } = createAccountToken(name);
+  const result = await setUpAccount({ accountToken: token, password: 'notebook123' });
   userRow = db.prepare('SELECT * FROM users WHERE id = ?').get(result.user.id);
   journalId = result.user.activeJournalId;
 }
@@ -60,7 +62,9 @@ const draft = (deviceId, entryId, contents, clientTime, extra = {}) =>
 before(async () => {
   ({ db } = await import('../server/db.js'));
   store = await import('../server/entries.js');
-  ({ signup, createSignupToken } = await import('../server/auth.js'));
+  ({ setUpAccount, createAccountToken, lookupAccountToken, login } = await import(
+    '../server/auth.js'
+  ));
 });
 
 describe('scratch space', () => {
@@ -457,46 +461,83 @@ describe('location', () => {
   });
 });
 
-describe('signup tokens', () => {
-  test('signup without a token is refused', async () => {
-    await assert.rejects(
-      () => signup({ username: 'notoken', password: 'notebook123' }),
-      /signup token/i
-    );
+describe('account tokens', () => {
+  const sessionCount = (userId) =>
+    db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?').get(userId).n;
+
+  test('setup without a token is refused', async () => {
+    await assert.rejects(() => setUpAccount({ password: 'notebook123' }), /account token/i);
+  });
+
+  test('the name is the operator’s choice, checked when the token is minted', () => {
+    assert.throws(() => createAccountToken('no spaces here'), /Username can use/i);
+    assert.throws(() => createAccountToken('x'), /2–32 characters/i);
+  });
+
+  test('a token names the account it will create', async () => {
+    const { token } = createAccountToken('invited');
+    const pending = lookupAccountToken(token);
+    assert.equal(pending.username, 'invited');
+    assert.equal(pending.exists, false);
+
+    const result = await setUpAccount({ accountToken: token, password: 'notebook123' });
+    assert.equal(result.user.username, 'invited');
+    assert.equal(result.created, true);
+    // A new account arrives with its default journal, active.
+    assert.ok(result.user.activeJournalId);
   });
 
   test('a token works once and then is gone', async () => {
-    const { token } = createSignupToken();
-    await signup({ username: 'invited', password: 'notebook123', signupToken: token });
+    const { token } = createAccountToken('once');
+    await setUpAccount({ accountToken: token, password: 'notebook123' });
+    assert.throws(() => lookupAccountToken(token), /account token/i);
     await assert.rejects(
-      () => signup({ username: 'invited2', password: 'notebook123', signupToken: token }),
-      /signup token/i
+      () => setUpAccount({ accountToken: token, password: 'notebook123' }),
+      /account token/i
     );
   });
 
   test('an expired token is refused and not consumed', async () => {
-    const { token } = createSignupToken();
-    db.prepare('UPDATE signup_tokens SET expires_at = 1 WHERE token = ?').run(token);
+    const { token } = createAccountToken('late');
+    db.prepare('UPDATE account_tokens SET expires_at = 1 WHERE token = ?').run(token);
     await assert.rejects(
-      () => signup({ username: 'late', password: 'notebook123', signupToken: token }),
-      /signup token/i
+      () => setUpAccount({ accountToken: token, password: 'notebook123' }),
+      /account token/i
     );
-    assert.ok(db.prepare('SELECT token FROM signup_tokens WHERE token = ?').get(token));
+    assert.ok(db.prepare('SELECT token FROM account_tokens WHERE token = ?').get(token));
   });
 
-  test('a taken username does not burn the token', async () => {
-    const first = createSignupToken();
-    await signup({ username: 'already', password: 'notebook123', signupToken: first.token });
-    const { token } = createSignupToken();
-    await assert.rejects(
-      () => signup({ username: 'already', password: 'notebook123', signupToken: token }),
-      /taken/i
-    );
-    const again = await signup({
-      username: 'already-other',
+  test('a token for an existing name resets that account', async () => {
+    const created = await setUpAccount({
+      accountToken: createAccountToken('returning').token,
       password: 'notebook123',
-      signupToken: token,
     });
-    assert.equal(again.user.username, 'already-other');
+    const userId = created.user.id;
+    assert.equal(sessionCount(userId), 1);
+
+    const reset = createAccountToken('returning');
+    assert.equal(reset.exists, true);
+    assert.equal(lookupAccountToken(reset.token).exists, true);
+
+    const after = await setUpAccount({ accountToken: reset.token, password: 'newnotebook456' });
+    // Same account — the journal and everything keyed to the user survive.
+    assert.equal(after.user.id, userId);
+    assert.equal(after.created, false);
+    assert.equal(after.user.activeJournalId, created.user.activeJournalId);
+    // The old password is dead, and so is every session signed in under it.
+    await assert.rejects(
+      () => login({ username: 'returning', password: 'notebook123' }),
+      /Invalid username or password/
+    );
+    assert.equal(sessionCount(userId), 1);
+    const back = await login({ username: 'returning', password: 'newnotebook456' });
+    assert.equal(back.user.id, userId);
+  });
+
+  test('minting again for a name retires the outstanding token', async () => {
+    const first = createAccountToken('superseded');
+    const second = createAccountToken('superseded');
+    assert.throws(() => lookupAccountToken(first.token), /account token/i);
+    assert.equal(lookupAccountToken(second.token).username, 'superseded');
   });
 });

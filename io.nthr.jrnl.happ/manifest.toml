@@ -16,7 +16,7 @@ geo_ua = { desc = "User-Agent for geocoding requests", default = "Jrnl/1.0 (self
 [volumes]
 server  = { kind = "app", src = "server", desc = "HTTP API and static file server" }
 public  = { kind = "app", src = "public", desc = "SPA client" }
-scripts = { kind = "app", src = "scripts", desc = "Operator scripts (signup tokens, seed)" }
+scripts = { kind = "app", src = "scripts", desc = "Operator scripts (account tokens, seed)" }
 pkg     = { kind = "app", src = "package.json", desc = "Package metadata" }
 data    = { kind = "data", desc = "SQLite database, WAL, and uploaded media" }
 
@@ -34,5 +34,5 @@ JRNL_HOST    = "${routes.main}"
 JRNL_GEO_UA  = "${geo_ua}"
 
 [commands]
-signup-token = { cmd = ["node", "/app/scripts/signup-token.js"], desc = "Mint a one-time invite token for a new account" }
+account-token = { cmd = ["node", "/app/scripts/account-token.js"], desc = "Mint a one-time token for a username: creates that account, or resets it if it exists" }
 seed-db = { cmd = ["node", "/app/scripts/seed.js"], desc = "Seed the database with some data" }

@@ -11,6 +11,6 @@
     "start": "node server/index.js",
     "test": "node --test",
     "seed": "node scripts/seed.js",
-    "signup-token": "node scripts/signup-token.js"
+    "account-token": "node scripts/account-token.js"
   }
 }

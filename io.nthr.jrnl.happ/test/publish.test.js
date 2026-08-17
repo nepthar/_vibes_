@@ -11,8 +11,8 @@ process.on('exit', () => rmSync(dataDir, { recursive: true, force: true }));
 let db;
 let store;
 let publish;
-let signup;
-let createSignupToken;
+let setUpAccount;
+let createAccountToken;
 let userRow;
 let journalId;
 
@@ -20,8 +20,8 @@ const text = (...values) => values.map((value) => ({ kind: 'text', text: value }
 const uuid = () => crypto.randomUUID();
 
 async function freshUser(name) {
-  const { token } = createSignupToken();
-  const result = await signup({ username: name, password: 'notebook123', signupToken: token });
+  const { token } = createAccountToken(name);
+  const result = await setUpAccount({ accountToken: token, password: 'notebook123' });
   userRow = db.prepare('SELECT * FROM users WHERE id = ?').get(result.user.id);
   journalId = result.user.activeJournalId;
 }
@@ -30,7 +30,7 @@ before(async () => {
   ({ db } = await import('../server/db.js'));
   store = await import('../server/entries.js');
   publish = await import('../server/publish.js');
-  ({ signup, createSignupToken } = await import('../server/auth.js'));
+  ({ setUpAccount, createAccountToken } = await import('../server/auth.js'));
   await freshUser('alice');
 });
 

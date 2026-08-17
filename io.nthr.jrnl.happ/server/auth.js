@@ -1,7 +1,7 @@
 import { randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { db, uuid, now } from './db.js';
-import { badRequest, conflict, unauthorized } from './http.js';
+import { badRequest, unauthorized } from './http.js';
 
 const scrypt = promisify(scryptCb);
 
@@ -15,7 +15,7 @@ const SESSION_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
  */
 export const MIN_PASSWORD_LENGTH = 10;
 
-export const SIGNUP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const ACCOUNT_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const insertUser = db.prepare(
   `INSERT INTO users (id, username, password_hash, created_at, remembered_granularity)
@@ -25,12 +25,15 @@ const findUserByName = db.prepare('SELECT * FROM users WHERE username = ? COLLAT
 const insertSession = db.prepare(
   'INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)'
 );
-const insertSignupToken = db.prepare(
-  'INSERT INTO signup_tokens (token, created_at, expires_at) VALUES (?, ?, ?)'
+const insertAccountToken = db.prepare(
+  'INSERT INTO account_tokens (token, username, created_at, expires_at) VALUES (?, ?, ?, ?)'
 );
-const findSignupToken = db.prepare('SELECT * FROM signup_tokens WHERE token = ?');
-const deleteSignupToken = db.prepare('DELETE FROM signup_tokens WHERE token = ?');
-const sweepSignupTokens = db.prepare('DELETE FROM signup_tokens WHERE expires_at <= ?');
+const findAccountToken = db.prepare('SELECT * FROM account_tokens WHERE token = ?');
+const deleteAccountToken = db.prepare('DELETE FROM account_tokens WHERE token = ?');
+const deleteAccountTokensFor = db.prepare('DELETE FROM account_tokens WHERE username = ?');
+const sweepAccountTokens = db.prepare('DELETE FROM account_tokens WHERE expires_at <= ?');
+const setPasswordHash = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+const deleteUserSessions = db.prepare('DELETE FROM sessions WHERE user_id = ?');
 const findSession = db.prepare(
   `SELECT users.* FROM sessions
    JOIN users ON users.id = sessions.user_id
@@ -58,35 +61,109 @@ async function verifyPassword(password, stored) {
 }
 
 /**
- * Mints a one-time signup token. The operator runs `npm run signup-token`
- * and hands the value to the person who should have an account.
+ * Accounts are invite-only, and the invite names the account: the operator
+ * chooses the username when minting, so the person who receives the token
+ * only ever chooses a password. No email, no verification.
  */
-export function createSignupToken() {
-  sweepSignupTokens.run(now());
-  const token = randomBytes(32).toString('base64url');
-  const created = now();
-  const expiresAt = created + SIGNUP_TTL_MS;
-  insertSignupToken.run(token, created, expiresAt);
-  return { token, expiresAt };
-}
-
-/**
- * Account creation is invite-only: a username, a password, and a token
- * the operator minted. No email, no verification.
- */
-function validateCredentials(username, password) {
+function validateUsername(username) {
   const name = String(username ?? '').trim();
-  const secret = String(password ?? '');
   if (name.length < 2 || name.length > 32) {
     throw badRequest('Username must be 2–32 characters');
   }
   if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
     throw badRequest('Username can use letters, numbers, dot, dash, underscore');
   }
+  return name;
+}
+
+function validatePassword(password) {
+  const secret = String(password ?? '');
   if (secret.length < MIN_PASSWORD_LENGTH) {
     throw badRequest(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
   }
-  return { name, secret };
+  return secret;
+}
+
+/**
+ * Mints a one-time account token for a username. The operator runs
+ * `npm run account-token <username>` and hands the value to the person who
+ * should hold that account. `exists` reports what the token will do when it is
+ * redeemed: create the account, or reset the one already under that name.
+ */
+export function createAccountToken(username) {
+  const name = validateUsername(username);
+  sweepAccountTokens.run(now());
+  const token = randomBytes(32).toString('base64url');
+  const created = now();
+  const expiresAt = created + ACCOUNT_TOKEN_TTL_MS;
+  // One live token per name: minting again supersedes whatever was outstanding,
+  // so a token handed out by mistake stops working the moment it is replaced.
+  deleteAccountTokensFor.run(name);
+  insertAccountToken.run(token, name, created, expiresAt);
+  return { token, username: name, expiresAt, exists: !!findUserByName.get(name) };
+}
+
+/**
+ * Reads a token back without spending it, so the setup screen can show the
+ * name it carries before asking for a password.
+ */
+export function lookupAccountToken(accountToken) {
+  const value = String(accountToken ?? '').trim();
+  const row = findAccountToken.get(value);
+  if (!row || row.expires_at <= now()) throw badRequest('Invalid or expired account token');
+  return {
+    username: row.username,
+    exists: !!findUserByName.get(row.username),
+    expiresAt: row.expires_at,
+  };
+}
+
+/**
+ * Redeems an account token: the name is the token's, the password is the
+ * person's. A name with no account gets one; a name that already has an
+ * account has it reset — the new password takes effect and every session
+ * signed in under the old one is dropped, since whoever needed the reset is
+ * exactly whoever might not control those sessions any more. The journal
+ * itself is untouched.
+ */
+export async function setUpAccount({ accountToken, password }) {
+  const value = String(accountToken ?? '').trim();
+  const secret = validatePassword(password);
+  // Fails early on a bad token so a hopeless request doesn't pay for a hash.
+  const { username } = lookupAccountToken(value);
+  const passwordHash = await hashPassword(secret);
+  const timestamp = now();
+  let created = false;
+
+  // Token consume and account write share a transaction, so any failure puts
+  // the token back. Re-read the token inside it: hashing took a moment, and
+  // the token may have been spent or swept in the meantime.
+  db.exec('BEGIN');
+  try {
+    const row = findAccountToken.get(value);
+    if (!row || row.expires_at <= now()) throw badRequest('Invalid or expired account token');
+    deleteAccountToken.run(value);
+    const existing = findUserByName.get(row.username);
+    if (existing) {
+      setPasswordHash.run(passwordHash, existing.id);
+      deleteUserSessions.run(existing.id);
+    } else {
+      const id = uuid();
+      const journalId = uuid();
+      insertUser.run(id, row.username, passwordHash, timestamp);
+      // Every user starts with the default `personal` journal, active.
+      insertJournal.run(journalId, id, 'personal', timestamp);
+      setActiveJournal.run(journalId, id);
+      created = true;
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+
+  const user = findUserByName.get(username);
+  return { ...issueToken(user), user: publicUser(user), created };
 }
 
 function issueToken(user) {
@@ -102,37 +179,6 @@ const publicUser = (user) => ({
   activeJournalId: user.active_journal_id,
   rememberedGranularity: user.remembered_granularity,
 });
-
-export async function signup({ username, password, signupToken }) {
-  const { name, secret } = validateCredentials(username, password);
-  if (findUserByName.get(name)) throw conflict('That username is taken');
-
-  const invite = String(signupToken ?? '').trim();
-  const passwordHash = await hashPassword(secret);
-  const id = uuid();
-  const timestamp = now();
-  const journalId = uuid();
-
-  // Token consume and user insert share a transaction so a unique-name
-  // collision (or any other failure) puts the invite back.
-  db.exec('BEGIN');
-  try {
-    const row = findSignupToken.get(invite);
-    if (!row || row.expires_at <= now()) throw badRequest('Invalid or expired signup token');
-    deleteSignupToken.run(invite);
-    insertUser.run(id, name, passwordHash, timestamp);
-    // Every user starts with the default `personal` journal, active.
-    insertJournal.run(journalId, id, 'personal', timestamp);
-    setActiveJournal.run(journalId, id);
-    db.exec('COMMIT');
-  } catch (error) {
-    db.exec('ROLLBACK');
-    throw error;
-  }
-
-  const user = findUserByName.get(name);
-  return { ...issueToken(user), user: publicUser(user) };
-}
 
 export async function login({ username, password }) {
   const name = String(username ?? '').trim();

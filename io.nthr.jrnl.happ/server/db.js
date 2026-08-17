@@ -49,13 +49,19 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
 
--- One-time invites. The operator mints these with npm run signup-token;
--- they last a week and are deleted the moment they create an account.
-CREATE TABLE IF NOT EXISTS signup_tokens (
+-- One-time account tokens, minted with npm run account-token. Each carries the
+-- username it was issued for: a name with no account gets one, a name that
+-- already has an account has it reset. They last a week and are deleted the
+-- moment they are used. At most one outstanding token per name — minting again
+-- supersedes the last one rather than leaving two live.
+CREATE TABLE IF NOT EXISTS account_tokens (
   token      TEXT PRIMARY KEY,
+  username   TEXT NOT NULL UNIQUE COLLATE NOCASE,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
 );
+
+DROP TABLE IF EXISTS signup_tokens;
 
 CREATE TABLE IF NOT EXISTS journals (
   id         TEXT PRIMARY KEY,

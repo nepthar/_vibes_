@@ -17,11 +17,15 @@
     />
   </head>
   <body>
-    <!-- Sign in / sign up. Sign-in is the default; a token is only asked for when creating. -->
+    <!--
+      Sign in / account setup. Sign-in is the default; account setup is two
+      steps on the same card — the account token, then the password for the
+      name that token carries.
+    -->
     <div id="auth" class="auth" hidden>
       <form id="auth-form" class="auth-card" autocomplete="on">
         <h1 class="auth-title">Journal ~ A quite space to write</h1>
-        <p class="auth-sub">Sign in.</p>
+        <p id="auth-sub" class="auth-sub">Sign in.</p>
         <input
           id="auth-username"
           name="username"
@@ -44,9 +48,9 @@
         />
         <input
           id="auth-token"
-          name="signup-token"
+          name="account-token"
           class="field"
-          placeholder="signup token"
+          placeholder="account token"
           autocapitalize="none"
           autocorrect="off"
           spellcheck="false"
@@ -56,8 +60,8 @@
         <p id="auth-error" class="auth-error" role="alert"></p>
         <button id="auth-submit" class="auth-button" type="submit">Sign in</button>
         <p class="auth-switch">
-          <span id="auth-switch-lead">Have a signup token?</span>
-          <button type="button" id="auth-toggle" class="auth-link">Create an account</button>
+          <span id="auth-switch-lead">Have an account token?</span>
+          <button type="button" id="auth-toggle" class="auth-link">Set up an account</button>
         </p>
       </form>
     </div>

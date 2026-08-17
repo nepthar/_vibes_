@@ -133,6 +133,13 @@ svg {
   outline-offset: -1px;
 }
 
+/* The username on the account-setup screen: it came with the token, so it
+   reads as a label that happens to be a field. */
+.field[readonly] {
+  color: var(--label-secondary);
+  background: transparent;
+}
+
 .auth-button {
   margin-top: 6px;
   padding: 12px;
