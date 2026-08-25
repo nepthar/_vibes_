@@ -15,6 +15,7 @@ subdomain    = "jrnl"
 # Shown to Nominatim / Overpass; identify your instance before a public deploy.
 geo_ua = { desc = "User-Agent sent with geocoding requests; identify your instance before a public deploy", default = "Jrnl/1.0 (self-hosted harbor app)" }
 
+[adv_config]
 # Rate limiting. One bucket covers every request, static files included;
 # credential checks get a second, much tighter one on top of it.
 rate_rps   = { desc = "Requests per second for the whole process, static files included; 30 carries ten devices writing at once", default = "30" }
