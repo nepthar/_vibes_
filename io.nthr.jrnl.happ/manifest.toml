@@ -4,9 +4,9 @@
 # Data (SQLite + uploaded media) lives in the harbor data volume.
 
 [app]
-version      = "1.0.0"
+version      = "1.0.1"
 display_name = "Journal"
-description  = "A quiet personal journal: typewriter writing, location tags, list / calendar / map"
+description  = "A quiet personal journal with publishing and geotagging"
 subdomain    = "jrnl"
 
 # Every value here maps to one JRNL_* env var below, and every default is the
@@ -14,6 +14,7 @@ subdomain    = "jrnl"
 [config]
 # Shown to Nominatim / Overpass; identify your instance before a public deploy.
 geo_ua = { desc = "User-Agent sent with geocoding requests; identify your instance before a public deploy", default = "Jrnl/1.0 (self-hosted harbor app)" }
+dummy = { desc = "This actually is not used", default = "Nothing" }
 
 [adv_config]
 # Rate limiting. One bucket covers every request, static files included;
