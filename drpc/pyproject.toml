@@ -1,0 +1,23 @@
+[project]
+name = "drpc"
+version = "0.1.0"
+description = "Daemon RPC: services you talk to in newline-delimited JSON-RPC or in English"
+requires-python = ">=3.13"
+dependencies = [
+    "anthropic>=1.11.0",
+]
+
+[project.scripts]
+drpc = "drpc.__main__:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["drpc"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
