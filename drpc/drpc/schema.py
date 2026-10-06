@@ -42,6 +42,9 @@ def type_schema(tp) -> dict:
         return schema
 
     if origin is dict or tp is dict:
+        args = get_args(tp)
+        if len(args) == 2:
+            return {"type": "object", "additionalProperties": type_schema(args[1])}
         return {"type": "object"}
 
     if tp in _PRIMITIVES:

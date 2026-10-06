@@ -13,6 +13,7 @@ from .interpreter import Interpreter
 from .peercred import peer_credentials
 from .protocol import classify, encode_json, encode_text
 from .session import Session
+from .throttle import BYTES_PER_TOKEN
 
 log = logging.getLogger("drpc")
 
@@ -34,7 +35,16 @@ async def converse(
         await write(encode_json(_error(REFUSED, f"connection refused: {e}")))
         return
     english = Interpreter(service, session)
+    throttle = service.throttle_for(session)
+
+    async def send(data: bytes) -> None:
+        if throttle:
+            throttle.charge(len(data))
+        await write(data)
+
     while True:
+        if throttle:
+            await throttle.wait()
         try:
             raw = await readline()
         except ValueError:  # line longer than MAX_LINE
@@ -42,21 +52,37 @@ async def converse(
             return
         if not raw:
             return
+        if throttle:
+            throttle.charge(len(raw))
 
         kind, payload = classify(raw.decode("utf-8", errors="replace"))
         if kind == "rpc":
             reply = await service.handle_rpc(payload, session)
             if reply is not None:
-                await write(encode_json(reply))
+                await send(encode_json(reply))
         elif kind == "bad_json":
-            await write(encode_json(_error(PARSE_ERROR, f"parse error: {payload}")))
+            await send(encode_json(_error(PARSE_ERROR, f"parse error: {payload}")))
         elif kind == "text":
-            try:
-                answer = help.answer(service, payload) or await english.reply(payload)
-            except Exception as e:  # a bug on the English side shouldn't drop the connection
-                log.exception("english reply failed")
-                answer = f"[internal error: {type(e).__name__}: {e}]"
-            await write(encode_text(answer))
+            await send(encode_text(await _english(service, session, english, payload, throttle)))
+
+
+async def _english(service, session: Session, english: Interpreter, line: str, throttle) -> str:
+    if answer := help.answer(service, line):
+        return answer
+    if session.user is None and not service.english_for_anonymous:
+        return (
+            "English is only available to identified users (connect over the Unix socket).\n"
+            'Send "help" to see what this service does, or call its methods with JSON-RPC.'
+        )
+    before = english.tokens_used
+    try:
+        return await english.reply(line)
+    except Exception as e:  # a bug on the English side shouldn't drop the connection
+        log.exception("english reply failed")
+        return f"[internal error: {type(e).__name__}: {e}]"
+    finally:
+        if throttle:
+            throttle.charge((english.tokens_used - before) * BYTES_PER_TOKEN)
 
 
 def _error(code: int, message: str) -> dict:

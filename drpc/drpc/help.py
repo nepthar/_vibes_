@@ -59,6 +59,12 @@ def method_detail(m) -> str:
     example = {"jsonrpc": "2.0", "id": 1, "method": m.name}
     if m.required:
         example["params"] = {n: _placeholder(m.params[n]) for n in m.required}
+    if m.errors:
+        lines.append("Errors:")
+        for e in m.errors:
+            fields = ", ".join(f"{k}: {_type(v)}" for k, v in e.data.get("properties", {}).items())
+            lines.append(f"  {e.code} {e.name}: {e.message}" + (f"  {{{fields}}}" if fields else ""))
+        lines.append("")
     lines += ["Example:", "  " + dumps(example)]
     return "\n".join(lines)
 

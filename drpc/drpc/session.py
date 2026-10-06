@@ -5,14 +5,8 @@ call. On a Unix socket it's the OS user who connected (the kernel says so);
 over stdio it's whoever started the daemon; over TCP it's nobody, unless the
 service's @svc.authenticate hook decides otherwise.
 
-A handler gets the session by asking for it, FastAPI-style:
-
-    @svc.method(name="todo.add")
-    def add(text: str, session: Session) -> Item:
-        return Item(text, by=session.user)
-
-The session parameter is filled in by the framework, never by the caller, and
-doesn't appear in the method's schema.
+Handlers reach it through their RequestContext, as ctx.session. It never
+appears in a JSON-RPC message.
 """
 
 import itertools

@@ -17,12 +17,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Literal
 
-from drpc import RpcError, Service, Session
+from drpc import RequestContext, Service, Session, error
 
 svc = Service(
     "todo",
     "A small in-memory todo list with tags and priorities.",
     instructions="Items are numbered by id. Prefer showing lists compactly, one item per line.",
+    bytes_per_sec=2_000,  # per user: ~500 tokens/s of English, plenty of JSON-RPC
 )
 
 Priority = Literal["low", "normal", "high"]
@@ -59,7 +60,7 @@ def remember(session: Session) -> str | None:
     return session.user
 
 
-@svc.context
+@svc.llm_context
 def user_history(session: Session) -> dict:
     """Tells the LLM when this user was last here."""
     if session.user is None:
@@ -68,86 +69,125 @@ def user_history(session: Session) -> dict:
     return {"previous session": prev or "none, this is their first visit"}
 
 
-@svc.context
+@svc.llm_context
 async def list_status(session: Session) -> str:
     open_count = sum(not i.done for i in items.values())
     return f"The list has {open_count} open item(s) out of {len(items)}."
 
 
+# -- errors ------------------------------------------------------------------
+
+
+@error(404, "no item with that id")
+class NotFound:
+    id: int
+
+
 # -- the list ----------------------------------------------------------------
 
 
-def _get(id: int) -> Item:
-    if id not in items:
-        raise RpcError(404, f"no item with id {id}")
-    return items[id]
+@dataclass
+class Add:
+    text: Annotated[str, "What needs doing"]
+    priority: Priority = "normal"
+    tags: Annotated[list[str], "Free-form labels, e.g. ['home']"] = field(default_factory=list)
 
 
-@svc.method(name="todo.add")
-def add(
-    text: Annotated[str, "What needs doing"],
-    priority: Priority = "normal",
-    tags: Annotated[list[str], "Free-form labels, e.g. ['home']"] = [],
-    session: Session = None,
-) -> Item:
+@svc.method("todo.add")
+def add(ctx: RequestContext, req: Add) -> Item:
     """Add an item to the list. Returns the new item, including its id."""
-    item = Item(next(ids), text, priority, list(tags), by=session.user)
+    item = Item(next(ids), req.text, req.priority, list(req.tags), by=ctx.session.user)
     items[item.id] = item
     return item
 
 
-@svc.method(name="todo.list")
-def list_items(
-    tag: Annotated[str | None, "Only items with this tag"] = None,
-    done: Annotated[bool | None, "true for finished items, false for open ones; omit for all"] = None,
-) -> list[Item]:
-    """List items, optionally filtered by tag and/or done-ness. High priority first."""
+@dataclass
+class Find:
+    tag: Annotated[str | None, "Only items with this tag"] = None
+    done: Annotated[bool | None, "true for finished items, false for open ones; omit for all"] = None
+    contains: Annotated[str | None, "Only items whose text contains this, ignoring case"] = None
+
+
+@svc.method("todo.list")
+def list_items(req: Find) -> list[Item]:
+    """List items, optionally filtered by tag, done-ness, and text. High priority first."""
     rank = {"high": 0, "normal": 1, "low": 2}
     found = [
         i for i in items.values()
-        if (tag is None or tag in i.tags) and (done is None or i.done == done)
+        if (req.tag is None or req.tag in i.tags)
+        and (req.done is None or i.done == req.done)
+        and (req.contains is None or req.contains.lower() in i.text.lower())
     ]
     return sorted(found, key=lambda i: (rank[i.priority], i.id))
 
 
-@svc.method(name="todo.done")
-def mark_done(id: int, done: bool = True) -> Item:
-    """Mark an item finished (or pass done=false to reopen it)."""
-    item = _get(id)
-    item.done = done
-    return item
+@dataclass
+class MarkDone:
+    id: int
+    done: Annotated[bool, "false reopens the item"] = True
 
 
-@svc.method(name="todo.update")
-def update(id: int, text: str | None = None, priority: Priority | None = None, tags: list[str] | None = None) -> Item:
+@svc.method("todo.done")
+def mark_done(req: MarkDone) -> Item | NotFound:
+    """Mark an item finished, or reopen it."""
+    if req.id not in items:
+        return NotFound(req.id)
+    items[req.id].done = req.done
+    return items[req.id]
+
+
+@dataclass
+class Update:
+    id: int
+    text: str | None = None
+    priority: Priority | None = None
+    tags: list[str] | None = None
+
+
+@svc.method("todo.update")
+def update(req: Update) -> Item | NotFound:
     """Change an item's text, priority, or tags. Omitted fields stay as they are."""
-    item = _get(id)
-    if text is not None:
-        item.text = text
-    if priority is not None:
-        item.priority = priority
-    if tags is not None:
-        item.tags = list(tags)
+    item = items.get(req.id)
+    if item is None:
+        return NotFound(req.id)
+    if req.text is not None:
+        item.text = req.text
+    if req.priority is not None:
+        item.priority = req.priority
+    if req.tags is not None:
+        item.tags = list(req.tags)
     return item
 
 
-@svc.method(name="todo.remove")
-def remove(id: int) -> bool:
+@dataclass
+class Remove:
+    id: int
+
+
+@svc.method("todo.remove")
+def remove(req: Remove) -> bool | NotFound:
     """Delete an item for good. Returns true."""
-    _get(id)
-    del items[id]
+    if items.pop(req.id, None) is None:
+        return NotFound(req.id)
     return True
 
 
-@svc.method(name="todo.stats")
-async def stats() -> dict:
+@dataclass
+class Stats:
+    open: int
+    done: int
+    open_by_tag: dict[str, int]
+
+
+@svc.method("todo.stats")
+async def stats() -> Stats:
     """Counts of open and finished items, and open items per tag."""
     open_items = [i for i in items.values() if not i.done]
     per_tag: dict[str, int] = {}
     for i in open_items:
         for t in i.tags:
             per_tag[t] = per_tag.get(t, 0) + 1
-    return {"open": len(open_items), "done": len(items) - len(open_items), "open_by_tag": per_tag}
+    return Stats(len(open_items), len(items) - len(open_items), per_tag)
 
 
 if __name__ == "__main__":

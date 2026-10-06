@@ -4,39 +4,65 @@ import asyncio
 import getpass
 import json
 import os
+import re
 import socket
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from typing import Annotated, Literal
 
 import pytest
 
-from drpc import Client, RpcError, Service, Session
+from drpc import Client, RequestContext, RpcError, Service, Session, error
 from drpc import help
 from drpc.protocol import classify, decode_text_line, encode_text
 from drpc.server import serve
+
+
+@dataclass
+class Add:
+    a: int
+    b: int = 1
+
+
+@dataclass
+class Mode:
+    kind: Literal["fast", "slow"]
+    note: Annotated[str | None, "why"] = None
+
+
+@error(422, "that number is too big")
+class TooBig:
+    limit: int
 
 
 def make_service() -> Service:
     svc = Service("calc", "Arithmetic")
 
     @svc.method
-    def add(a: int, b: int = 1) -> int:
+    def add(req: Add) -> int | TooBig:
         """Add two integers."""
-        return a + b
+        if req.a + req.b > 1000:
+            return TooBig(1000)
+        return req.a + req.b
 
-    @svc.method(name="math.mode")
-    async def mode(kind: Literal["fast", "slow"], note: Annotated[str | None, "why"] = None) -> str:
-        return kind
+    @svc.method("math.mode")
+    async def mode(ctx: RequestContext, req: Mode) -> str:
+        return req.kind
 
     @svc.method
     def boom() -> None:
         raise RuntimeError("kaboom")
 
     @svc.method
-    def whoami(session: Session) -> dict:
-        return {"user": session.user, "uid": session.uid, "pid": session.pid}
+    def whoami(ctx: RequestContext) -> dict:
+        s = ctx.session
+        return {"user": s.user, "uid": s.uid, "pid": s.pid}
+
+    @svc.method
+    def echo_ctx(ctx: RequestContext) -> dict:
+        return {"method": ctx.method, "id": ctx.id, "headers": ctx.headers, "from_llm": ctx.from_llm}
 
     @svc.method
     def teapot() -> None:
@@ -230,9 +256,9 @@ def test_english_calls_tools_and_echoes_rpc():
     assert 'rpc> {"jsonrpc":"2.0","id":2,"method":"math.mode"' in reply and "rpc< error -32602" in reply
 
     results = api.requests[1]["messages"][-1]["content"]
-    assert results[0] == {"type": "tool_result", "tool_use_id": "t1", "content": "4"}
+    assert results[0]["content"].startswith("Stored as r1: integer.")  # the LLM never sees the 4
     assert results[1]["is_error"] is True
-    assert {t["name"] for t in api.requests[0]["tools"]} == {"rpc__discover", "add", "math__mode", "boom", "whoami", "teapot"}
+    assert {t["name"] for t in api.requests[0]["tools"]} == {"rpc__discover", "add", "math__mode", "boom", "whoami", "echo_ctx", "teapot"}
     assert api.requests[0]["fallbacks"] == "default"
     assert [m["role"] for m in interp.history] == ["user", "system", "assistant", "user", "assistant"]
 
@@ -246,7 +272,7 @@ def test_english_refusal_leaves_history_clean():
 def test_context_is_sent_only_when_it_changes():
     svc = make_service()
 
-    @svc.context
+    @svc.llm_context
     async def mood(session):
         return {"mood": session.state.get("mood", "calm")}
 
@@ -269,24 +295,52 @@ def test_context_is_sent_only_when_it_changes():
 # -- sessions and help -----------------------------------------------------------
 
 
-def test_session_is_injected_not_a_param():
-    svc = Service("s")
-
-    @svc.method
-    def whoami(greeting: str, session: Session) -> str:
-        return f"{greeting}, {session.user}"
-
-    m = svc.methods["whoami"]
-    assert m.order == ["greeting"] and "session" not in m.params
+def test_context_carries_session_and_headers():
+    svc = make_service()
+    m = svc.methods["echo_ctx"]
+    assert m.params == {} and m.ctx_param == "ctx"
     sess = Session(user="jordan")
-    resp = asyncio.run(svc.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "whoami", "params": ["hi"]}, sess))
-    assert resp["result"] == "hi, jordan"
+    req = {"jsonrpc": "2.0", "id": 9, "method": "echo_ctx", "headers": {"trace": "abc"}}
+    assert asyncio.run(svc.handle_rpc(req, sess))["result"] == {
+        "method": "echo_ctx", "id": 9, "headers": {"trace": "abc"}, "from_llm": False,
+    }
+    bad = asyncio.run(svc.handle_rpc({**req, "headers": [1]}, sess))
+    assert bad["error"]["code"] == -32600
+
+
+def test_declared_errors():
+    svc = make_service()
+    resp = rpc(svc, {"jsonrpc": "2.0", "id": 1, "method": "add", "params": [999, 2]})
+    assert resp["error"] == {"code": 422, "message": "that number is too big", "data": {"limit": 1000}}
+    m = svc.methods["add"]
+    assert m.result == {"type": "integer"}
+    assert [e.to_json()["name"] for e in m.errors] == ["TooBig"]
+    doc = rpc(svc, {"jsonrpc": "2.0", "id": 1, "method": "rpc.discover"})["result"]
+    add = next(x for x in doc["methods"] if x["name"] == "add")
+    assert add["errors"][0]["data"]["properties"] == {"limit": {"type": "integer"}}
+    assert "422 TooBig: that number is too big  {limit: integer}" in help.answer(svc, "help add")
+
+
+def test_handler_signature_is_checked():
+    svc = Service("s")
+    with pytest.raises(TypeError, match="must be annotated"):
+        @svc.method
+        def bad(x: int) -> int:
+            return x
+
+
+@dataclass
+class ById:
+    id: int
 
 
 def big_service() -> Service:
+    def noop(req: ById) -> None:
+        return None
+
     svc = Service("big", "Lots of methods", groups={"user": "Accounts"}, help_list_max=4)
     for name in ["user.get", "user.list", "user.delete", "billing.charge", "billing.refund"]:
-        svc.method(name=name)(lambda id: None)
+        svc.method(name)(noop)
     return svc
 
 
@@ -378,3 +432,145 @@ def test_authenticate_hook_can_rename_and_refuse():
     with Client(addr) as c, pytest.raises(RpcError) as e:
         c.whoami()
     assert e.value.code == -32001 and "closed for maintenance" in e.value.message
+
+
+# -- blind results ----------------------------------------------------------------
+
+from drpc.blind import TemplateError, describe, render, resolve_refs
+
+STORE = {
+    "r1": {"x": 1.23456, "y": -2.5, "name": "ball", "tags": ["red", "round"], "owner": None},
+    "r2": [{"id": 1, "text": "milk"}, {"id": 2, "text": "eggs"}],
+    "r3": {"home": 2, "work": 1},
+    "r4": [],
+}
+
+
+@pytest.mark.parametrize(
+    "template,expected",
+    [
+        ("The ball is at {r1.x:.2f}, {r1.y:.2f}", "The ball is at 1.23, -2.50"),
+        ("{r1.name:>6}|{r1.tags[-1]}|{r1.owner}", "  ball|round|null"),
+        ("{r1.tags}", '["red","round"]'),
+        ("Items:\n- #{r2[*].id} {r2[*].text}\ndone", "Items:\n- #1 milk\n- #2 eggs\ndone"),
+        ("{r3[*].key}={r3[*].value}", "home=2\nwork=1"),
+        ("Nothing:\n- {r4[*].text}\nend", "Nothing:\nend"),
+        ('send {"id": {r2[0].id}, "params": {"a": [1]}}', 'send {"id": 1, "params": {"a": [1]}}'),
+        ("plain {braces} and {rx} stay", "plain {braces} and {rx} stay"),
+    ],
+)
+def test_render(template, expected):
+    assert render(template, STORE) == expected
+
+
+@pytest.mark.parametrize(
+    "template,why",
+    [
+        ("{r1.__class__}", "no field '__class__'"),  # dunder names aren't fields of a JSON object
+        ("{r1.x.__class__.__init__.__globals__}", "no field"),
+        ("{r1.missing}", "no field 'missing'"),
+        ("{r9}", "there's no r9"),
+        ("{r2[5].id}", "out of range"),
+        ("{r1.x:999999999}", "isn't allowed"),
+        ("{r1.x:{r1.y}}", "unclosed or nested field"),
+        ("{r1.name:.2f}", "Unknown format code"),
+        ("{r2[*].id} {r1.tags[*]}", "one list"),
+        ("{r1.name[*]}", "isn't a list"),
+    ],
+)
+def test_render_rejects(template, why):
+    with pytest.raises(TemplateError, match=re.escape(why)):
+        render(template, STORE)
+
+
+def test_describe_never_includes_values():
+    item = {"type": "object", "title": "Item",
+            "properties": {"id": {"type": "integer"}, "text": {"type": "string"}}}
+    text = describe("r2", STORE["r2"], {"type": "array", "items": item})
+    assert "list of Item, 2 items" in text and "Item = {id: integer, text: string}" in text
+    assert "milk" not in text and "eggs" not in text
+    assert "map of string to integer, 2 entries" in describe("r3", STORE["r3"],
+        {"type": "object", "additionalProperties": {"type": "integer"}})
+    assert "home" not in describe("r3", STORE["r3"], {"type": "object", "additionalProperties": {}})
+
+
+def test_refs():
+    params = {"id": {"$ref": "r2[1].id"}, "pair": [{"$ref": "r1.x"}, 3], "text": "$ref"}
+    assert resolve_refs(params, STORE) == {"id": 2, "pair": [1.23456, 3], "text": "$ref"}
+    with pytest.raises(TemplateError):
+        resolve_refs({"id": {"$ref": "r2[*].id"}}, STORE)
+
+
+def test_english_chains_by_ref_and_fills_template():
+    svc = make_service()
+    interp, api = fake_interpreter(svc, [
+        NS(stop_reason="tool_use", content=[NS(type="tool_use", id="t1", name="add", input={"a": 40, "b": 1})]),
+        NS(stop_reason="tool_use", content=[NS(type="tool_use", id="t2", name="add",
+                                               input={"a": {"$ref": "r1"}})]),
+        NS(stop_reason="end_turn", content=[NS(type="text", text="That's {r2:03d}, see {r9}.")]),  # bad ref
+        NS(stop_reason="end_turn", content=[NS(type="text", text="That's {r2:03d}.")]),
+    ])
+    reply = asyncio.run(interp.reply("add 40 and 1, then add 1 to that"))
+    assert reply.startswith("That's 042.")
+    assert '"params":{"a":41}' in reply  # the echo shows the substituted value
+    retry = api.requests[3]["messages"][-1]["content"]
+    assert "there's no r9" in retry
+    sent = json.dumps([m["content"] for m in api.requests[3]["messages"]], default=repr)
+    assert "41" not in sent and "42" not in sent  # values never went to the model
+
+
+def test_internal_errors_are_opaque_to_the_llm():
+    interp, api = fake_interpreter(make_service(), [
+        NS(stop_reason="tool_use", content=[NS(type="tool_use", id="t1", name="boom", input={})]),
+        NS(stop_reason="end_turn", content=[NS(type="text", text="It broke.")]),
+    ])
+    reply = asyncio.run(interp.reply("boom"))
+    result = api.requests[1]["messages"][-1]["content"][0]
+    assert result["is_error"] and "kaboom" not in result["content"]
+    assert "kaboom" in reply  # the person still sees it in the echo
+
+
+# -- anonymous English and throttling -----------------------------------------------
+
+from drpc.throttle import Throttle
+
+
+def test_anonymous_gets_help_but_not_english(address):
+    with Client(address) as c:
+        assert "only available to identified users" in c.ask("what can you do?")
+        assert c.ask("help").startswith("calc: Arithmetic")
+
+
+def test_throttle_waits_off_debt():
+    t = Throttle(bytes_per_sec=1000, burst=100)
+    t.charge(100)
+    start = time.monotonic()
+    asyncio.run(t.wait())
+    assert time.monotonic() - start < 0.05  # within budget: no wait
+    t.charge(150)  # 150 bytes in debt at 1000 B/s
+    start = time.monotonic()
+    asyncio.run(t.wait())
+    assert 0.1 < time.monotonic() - start < 0.3
+
+
+def test_throttle_is_shared_per_user():
+    svc = Service("s", bytes_per_sec=10)
+    a, b = Session(user="jordan"), Session(user="jordan")
+    assert svc.throttle_for(a) is svc.throttle_for(b)
+    assert svc.throttle_for(Session()) is not svc.throttle_for(Session())
+    assert Service("s").throttle_for(a) is None
+
+
+def test_llm_calls_get_a_context_and_blind_error_data():
+    interp, api = fake_interpreter(make_service(), [
+        NS(stop_reason="tool_use", content=[
+            NS(type="tool_use", id="t1", name="echo_ctx", input={}),
+            NS(type="tool_use", id="t2", name="add", input={"a": 999, "b": 999}),
+        ]),
+        NS(stop_reason="end_turn", content=[NS(type="text", text="via llm: {r1.from_llm}; limit {r2.limit}")]),
+    ])
+    reply = asyncio.run(interp.reply("go"))
+    assert reply.startswith("via llm: true; limit 1000")
+    err = api.requests[1]["messages"][-1]["content"][1]
+    assert err["is_error"] and err["content"].startswith("422 TooBig: that number is too big")
+    assert "TooBig = {limit: integer}" in err["content"] and "1000" not in err["content"]
