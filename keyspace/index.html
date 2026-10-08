@@ -912,6 +912,20 @@ for (const r of REFS) {
 }
 const human = buildHuman(); scene.add(human);
 const youLabel = makeLabel('you', '<b>You</b><span>5 ft 9 in</span>');
+
+/* "Sims" style pin over the avatar's head. It has a fixed size in scene units,
+   and the camera is always 1 scene unit away, so it keeps the same size on screen. */
+const pin = new THREE.Group();
+{
+  const mat = new THREE.MeshStandardMaterial({ color: 0x3ee05a, emissive: 0x17a33a, emissiveIntensity: 0.55, roughness: 0.25, flatShading: true, transparent: true, opacity: 0.92, depthTest: false });
+  const top = new THREE.Mesh(new THREE.ConeGeometry(0.5, 0.62, 6).translate(0, 0.31, 0), mat);
+  const bot = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.0, 6).rotateX(Math.PI).translate(0, -0.5, 0), mat);
+  top.renderOrder = bot.renderOrder = 10;
+  pin.add(top, bot);
+  pin.scale.setScalar(0.026);
+}
+scene.add(pin);
+const PIN_GAP = 0.04;   // scene units from the head top to the pin center
 const spaceLabels = SPACES.map(s => makeLabel('space', `<b>${s.short}</b><span>${fmtLenPlain(s.sideFt)} wide</span>`, s.color));
 
 /* Beacon over the target square, sized in screen terms so it shows at any zoom. */
@@ -1307,8 +1321,11 @@ function frame(now) {
     const amp = walking * 0.55;
     legs[0].rotation.x = Math.sin(ph) * amp; legs[1].rotation.x = -Math.sin(ph) * amp;
     arms[0].rotation.x = -Math.sin(ph) * amp * 0.8; arms[1].rotation.x = Math.sin(ph) * amp * 0.8;
-    placeLabel(youLabel, project(0, 1.95 * hs, 0), smooth(140, 40, D) * (D > 6 ? 1 : 0));
-  } else youLabel.hidden = true;
+  }
+  const pinY = (human.visible ? 1.8 * hs : 0) + PIN_GAP;
+  pin.position.set(0, pinY + Math.sin(now / 600) * 0.004, 0);
+  pin.rotation.y = now / 900;
+  placeLabel(youLabel, project(0, pinY + 0.035, 0), smooth(140, 40, D) * (D > 6 ? 1 : 0));
 
   // references
   const baseX = Number(S.ax - S.tx) + (S.afx - S.tfx), baseZ = Number(S.az - S.tz) + (S.afz - S.tfz);
