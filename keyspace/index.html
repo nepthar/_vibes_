@@ -88,6 +88,7 @@ button.b.primary { background: var(--accent); color: #1a1205; border-color: var(
 .rung.ref { right: 116px; text-align: right; }
 .rung.sp { left: 146px; color: var(--c); font-weight: 600; }
 .rung:hover { color: var(--ink); }
+.rung.beyond { opacity: 0.35; }
 .tick { position: absolute; height: 1px; background: var(--muted); opacity: 0.6; }
 .tick.ref { left: 134px; width: 7px; }
 .tick.sp { left: 140px; width: 7px; background: var(--c); opacity: 1; }
@@ -149,6 +150,7 @@ button.b.primary { background: var(--accent); color: #1a1205; border-color: var(
     <button class="b primary" type="submit">Go</button>
     <button class="b" type="button" id="rand">Random</button>
     <button class="b" type="button" id="home">Home</button>
+    <button class="b" type="button" id="reset">Reset view</button>
   </form>
   <select id="jump" aria-label="Zoom to a scale"></select>
   <p id="msg" role="status"></p>
@@ -404,7 +406,10 @@ const S = {
   yaw: 0.75, pitch: 0.5, heading: 0.75, stride: 0, moving: 0,
   space: SPACES[2],
 };
-const LOGD_MIN = Math.log10(2.2), LOGD_MAX = 39.7, POS_MAX = 10n ** 41n;
+const LOGD_MIN = Math.log10(3), POS_MAX = 10n ** 41n;
+const ZOOM_MARGIN = 2.5;   // max view width = space side × this
+// Called only after the UI is set up (it needs logDForWidth).
+const maxLogD = () => logDForWidth(S.space.sideFt * ZOOM_MARGIN);
 function moveAxis(big, frac, d) {
   if (!isFinite(d) || d === 0) return [big, frac];
   if (Math.abs(d) < 1e15) { const f = frac + d, fl = Math.floor(f); return [big + BigInt(fl), f - fl]; }
@@ -975,6 +980,7 @@ function selectSpace(s) {
   q.placeholder = s.example ? `e.g. ${s.example}` : 'Use Random for this space';
   q.disabled = !s.example;
   setMsg('');
+  markLadderLimit();
   document.querySelectorAll('.rung.sp').forEach(el => el.style.fontWeight = el.dataset.id === s.id ? '800' : '600');
 }
 function setMsg(t, err = false) { const m = $('msg'); m.textContent = t; m.className = err ? 'err' : ''; }
@@ -1001,6 +1007,11 @@ $('find').addEventListener('submit', e => {
 $('rand').addEventListener('click', () => {
   const s = S.space, bytes = new Uint8Array(Math.ceil(s.bits / 8) + 8); crypto.getRandomValues(bytes);
   goToIndex(bigOf(bytes) % s.N, true, 'A random square. Nobody chose it, and nobody else will find it.');
+});
+const defaultLogD = () => innerWidth / innerHeight < 1 ? logDForWidth(22) : Math.log10(17);
+$('reset').addEventListener('click', () => {
+  fly = null; S.yaw = 0.75; S.pitch = 0.5; S.logDGoal = defaultLogD();
+  setMsg('View reset. You are still on the same square.');
 });
 $('home').addEventListener('click', () => { flyTo(0n, 0.5, 0n, 0.5, Math.log10(17)); setMsg('Back home.'); });
 function goToIndex(idx, fly, note) {
@@ -1031,7 +1042,7 @@ function buildLadder() {
     const t = document.createElement('div'); t.className = 'tick ref'; t.style.top = o.y + 'px'; ladderEl.appendChild(t);
     const b = document.createElement('button'); b.className = 'rung ref'; b.type = 'button'; b.style.top = o.ly + 'px';
     b.textContent = typeof o.r.ladder === 'string' ? o.r.ladder : o.r.name; b.title = `${o.r.name}: ${o.r.sub}`;
-    b.addEventListener('click', () => zoomToRef(o.r)); ladderEl.appendChild(b);
+    b.dataset.ft = o.r.sizeFt; b.addEventListener('click', () => zoomToRef(o.r)); ladderEl.appendChild(b);
   }
   for (const o of sps) {
     const t = document.createElement('div'); t.className = 'tick sp'; t.style.top = o.y + 'px'; t.style.setProperty('--c', o.s.color); ladderEl.appendChild(t);
@@ -1040,8 +1051,13 @@ function buildLadder() {
     b.textContent = o.s.short; b.title = `Show the whole ${o.s.name} space`;
     b.addEventListener('click', () => showWholeSpace(o.s)); ladderEl.appendChild(b);
   }
+  markLadderLimit();
   const cap = document.createElement('div'); cap.className = 'cap'; cap.style.top = '-2px'; cap.textContent = 'spaces'; ladderEl.appendChild(cap);
   const cap2 = cap.cloneNode(); cap2.textContent = 'scale'; cap2.style.left = '76px'; ladderEl.appendChild(cap2);
+}
+function markLadderLimit() {
+  const lim = S.space.sideFt * ZOOM_MARGIN;
+  ladderEl.querySelectorAll('.rung.ref').forEach(b => { b.classList.toggle('beyond', viewWidthFor(+b.dataset.ft) > lim * 1.01); });
 }
 function fillJump() {
   jumpEl.innerHTML = '<option value="">Zoom to a scale…</option>' +
@@ -1053,8 +1069,10 @@ jumpEl.addEventListener('change', () => {
   if (k === 'r') zoomToRef(REFS.find(r => r.id === id)); else if (k === 's') showWholeSpace(SPACES.find(s => s.id === id));
 });
 function zoomToRef(r) {
-  flyTo(S.tx, S.tfx, S.tz, S.tfz, logDForWidth(viewWidthFor(r.sizeFt) + Math.hypot(r.ox, r.oz) * FT_PER_M * 1.2));
-  setMsg(`${r.name}: ${r.sub}.`);
+  const want = logDForWidth(viewWidthFor(r.sizeFt) + Math.hypot(r.ox, r.oz) * FT_PER_M * 1.2);
+  flyTo(S.tx, S.tfx, S.tz, S.tfz, want);
+  if (want > maxLogD()) setMsg(`${r.name} is too big to show with the ${S.space.short} space. Pick a larger space to zoom out further.`, true);
+  else setMsg(`${r.name}: ${r.sub}.`);
 }
 function showWholeSpace(s) {
   selectSpace(s);
@@ -1070,9 +1088,9 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 function flyTo(bx, fx, bz, fz, logDEnd, moveAnchor = true) {
   const dX = bx - S.tx, dZ = bz - S.tz;
   const dist = Math.hypot(Number(dX) + fx - S.tfx, Number(dZ) + fz - S.tfz);
-  const a = S.logD, b = clamp(logDEnd, LOGD_MIN, LOGD_MAX);
+  const a = S.logD, b = clamp(logDEnd, LOGD_MIN, maxLogD());
   const peak = Math.max(a, b, dist > 1 ? Math.log10(dist * 0.9) : 0) + 0.12;
-  const c = 2 * peak - (a + b) / 2;
+  const c = 2 * Math.min(peak, Math.max(maxLogD(), a, b)) - (a + b) / 2;
   const dur = reduceMotion ? 350 : clamp(900 + 115 * (peak - Math.min(a, b)), 900, 5600);
   fly = { t0: performance.now(), dur, sx: S.tx, sfx: S.tfx, sz: S.tz, sfz: S.tfz, dX, dZ, efx: fx, efz: fz, a, b, c, moveAnchor, ex: bx, ez: bz, mid: false };
 }
@@ -1121,7 +1139,7 @@ canvas.addEventListener('pointermove', e => {
     pointers.set(e.pointerId, cur);
     const p = pinchState();
     if (pinch) {
-      S.logDGoal = clamp(S.logDGoal - Math.log10(p.d / pinch.d), LOGD_MIN, LOGD_MAX); S.logD = S.logDGoal;
+      S.logDGoal = clamp(S.logDGoal - Math.log10(p.d / pinch.d), LOGD_MIN, maxLogD()); S.logD = S.logDGoal;
       S.yaw += p.ang - pinch.ang;
       panScreen({ x: pinch.mx, y: pinch.my }, { x: p.mx, y: p.my });
     }
@@ -1145,7 +1163,7 @@ canvas.addEventListener('dblclick', e => {
 canvas.addEventListener('wheel', e => {
   e.preventDefault(); fly = null;
   const k = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
-  S.logDGoal = clamp(S.logDGoal + e.deltaY * k * 0.0011, LOGD_MIN, LOGD_MAX);
+  S.logDGoal = clamp(S.logDGoal + e.deltaY * k * 0.0011, LOGD_MIN, maxLogD());
 }, { passive: false });
 const a1 = new THREE.Vector3(), a2 = new THREE.Vector3();
 function panScreen(p0, p1) {
@@ -1200,7 +1218,7 @@ function placeLabel(el, p, opacity = 1) {
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (fly) stepFly(now);
-  else S.logD += (S.logDGoal - S.logD) * (1 - Math.exp(-dt * 9));
+  else { S.logDGoal = Math.min(S.logDGoal, maxLogD()); S.logD += (S.logDGoal - S.logD) * (1 - Math.exp(-dt * 9)); }
 
   // keyboard
   if (keys.size) {
@@ -1210,8 +1228,8 @@ function frame(now) {
     if (keys.has('w') || keys.has('arrowup')) f += 1; if (keys.has('s') || keys.has('arrowdown')) f -= 1;
     if (keys.has('d') || keys.has('arrowright')) r += 1; if (keys.has('a') || keys.has('arrowleft')) r -= 1;
     if (keys.has('q')) S.yaw += dt * 1.6; if (keys.has('e')) S.yaw -= dt * 1.6;
-    if (keys.has('+') || keys.has('=')) S.logDGoal = clamp(S.logDGoal - dt * 1.4, LOGD_MIN, LOGD_MAX);
-    if (keys.has('-') || keys.has('_')) S.logDGoal = clamp(S.logDGoal + dt * 1.4, LOGD_MIN, LOGD_MAX);
+    if (keys.has('+') || keys.has('=')) S.logDGoal = clamp(S.logDGoal - dt * 1.4, LOGD_MIN, maxLogD());
+    if (keys.has('-') || keys.has('_')) S.logDGoal = clamp(S.logDGoal + dt * 1.4, LOGD_MIN, maxLogD());
     if (f || r) {
       const l = Math.hypot(f, r), sy = Math.sin(S.yaw), cy = Math.cos(S.yaw);
       const dx = (-sy * f + cy * r) / l * speed * dt, dz = (-cy * f - sy * r) / l * speed * dt;
@@ -1223,8 +1241,10 @@ function frame(now) {
 
   // camera
   const cp = Math.cos(S.pitch);
-  camera.position.set(Math.sin(S.yaw) * cp, Math.sin(S.pitch), Math.cos(S.yaw) * cp);
-  camera.lookAt(0, Math.min(2.9 / D, 0.3), 0);
+  // Orbit around the avatar's waist, not its feet, so a close camera stays above the ground and outside the body.
+  const lookY = Math.min(3 / D, 0.9);
+  camera.position.set(Math.sin(S.yaw) * cp, lookY + Math.sin(S.pitch), Math.cos(S.yaw) * cp);
+  camera.lookAt(0, lookY, 0);
   camera.updateMatrixWorld();
 
   // sky
