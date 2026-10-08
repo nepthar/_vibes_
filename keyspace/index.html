@@ -1,0 +1,1368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Keyspace Walk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: full-bleed 3D survey field. Instrument panels float at the edges:
+   the space picker top-left, the address readout bottom-left, the scale ladder on the right.
+   Single dark look on purpose: this is the night sky over a survey grid. */
+:root {
+  --void: #04060c;
+  --panel: rgba(9, 13, 24, 0.84);
+  --rule: #24314b;
+  --ink: #e7edf7;
+  --muted: #8d9ab2;
+  --faint: #56637c;
+  --accent: #ffb547;
+  --danger: #ff7a7a;
+  --display: "Bricolage Grotesque", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --gutter: 16px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; overflow: hidden; background: var(--void); color: var(--ink); font-family: var(--display); font-size: 14px; }
+canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+#labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.lbl { position: absolute; left: 0; top: 0; white-space: nowrap; font-family: var(--mono); font-size: 11px; line-height: 1.3; color: var(--ink); transform-origin: 0 0; text-shadow: 0 1px 3px #000, 0 0 8px #000; }
+.lbl b { font-family: var(--display); font-weight: 600; font-size: 13px; letter-spacing: 0.01em; display: block; }
+.lbl span { color: var(--muted); }
+.lbl::before { content: ""; position: absolute; left: -9px; top: 6px; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: 0.8; }
+.lbl.mark { font-size: 10.5px; color: var(--muted); }
+.lbl.space b { font-family: var(--mono); font-size: 11.5px; }
+.lbl.you { color: var(--accent); }
+
+.left { position: fixed; left: var(--gutter); top: calc(var(--gutter) + env(safe-area-inset-top, 0px)); bottom: calc(var(--gutter) + env(safe-area-inset-bottom, 0px)); width: min(360px, calc(100% - 2 * var(--gutter))); display: flex; flex-direction: column; justify-content: space-between; gap: 12px; pointer-events: none; }
+.panel { pointer-events: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+#top { min-height: 0; flex: 0 1 auto; overflow-y: auto; }
+#bottom { flex: none; }
+h1 { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; text-wrap: balance; }
+h1 em { font-style: normal; color: var(--accent); }
+.lede { margin: 4px 0 0; color: var(--muted); line-height: 1.4; }
+#chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 600 12px/1 var(--display); color: var(--ink); background: transparent; border: 1px solid var(--rule); border-radius: 999px; padding: 6px 10px 6px 8px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); display: block; }
+.chip:hover { border-color: var(--c); }
+.chip[aria-pressed="true"] { background: color-mix(in srgb, var(--c) 22%, transparent); border-color: var(--c); }
+.chip:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, .rung:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+details summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 8px; }
+details summary::-webkit-details-marker { display: none; }
+details summary::after { content: "details"; margin-left: auto; font: 11px var(--mono); color: var(--faint); }
+details[open] summary::after { content: "hide"; }
+#sp-name { margin: 0; font-size: 17px; font-weight: 600; }
+#sp-blurb { margin: 6px 0 10px; color: var(--muted); line-height: 1.45; }
+dl { margin: 0; display: grid; gap: 7px; }
+dl div { display: grid; grid-template-columns: 112px 1fr; gap: 10px; align-items: baseline; }
+dt { color: var(--faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; line-height: 1.3; }
+dd { margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.4; font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
+sup { font-size: 0.72em; line-height: 0; }
+.dim { color: var(--muted); }
+
+.read { display: grid; grid-template-columns: 92px 1fr; gap: 10px; align-items: baseline; }
+.read .k { color: var(--faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; }
+.read code { font-family: var(--mono); font-size: 12.5px; color: var(--ink); overflow-wrap: anywhere; min-width: 0; }
+.read small { display: block; font-family: var(--mono); color: var(--muted); font-size: 10.5px; margin-top: 2px; overflow-wrap: anywhere; }
+.read.sel code { color: var(--accent); }
+form#find { display: flex; gap: 6px; flex-wrap: wrap; }
+form#find input { flex: 1 1 160px; min-width: 0; font: 12.5px var(--mono); color: var(--ink); background: rgba(0,0,0,0.35); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 9px; }
+button.b { font: 600 12.5px var(--display); color: var(--ink); background: #18233a; border: 1px solid var(--rule); border-radius: 6px; padding: 7px 11px; cursor: pointer; }
+button.b:hover { border-color: var(--muted); }
+button.b.primary { background: var(--accent); color: #1a1205; border-color: var(--accent); }
+#msg { margin: 0; min-height: 1.3em; font-size: 12px; color: var(--muted); line-height: 1.35; }
+#msg.err { color: var(--danger); }
+.status { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; justify-content: space-between; border-top: 1px solid var(--rule); padding-top: 9px; font: 11.5px var(--mono); color: var(--muted); }
+.status strong { color: var(--ink); font-weight: 600; }
+#h-note { color: var(--accent); width: 100%; }
+#h-note:empty { display: none; }
+#jump { display: none; font: 12px var(--display); color: var(--ink); background: #18233a; border: 1px solid var(--rule); border-radius: 6px; padding: 7px; }
+
+#ladder { position: fixed; right: var(--gutter); top: calc(var(--gutter) + env(safe-area-inset-top, 0px)); bottom: calc(var(--gutter) + env(safe-area-inset-bottom, 0px)); width: 250px; pointer-events: none; }
+#ladder .axis { position: absolute; left: 140px; top: 0; bottom: 0; width: 1px; background: linear-gradient(var(--rule), var(--rule)); }
+.rung { position: absolute; pointer-events: auto; cursor: pointer; font: 10.5px/1 var(--mono); color: var(--muted); white-space: nowrap; background: none; border: 0; padding: 2px 4px; transform: translateY(-50%); }
+.rung.ref { right: 116px; text-align: right; }
+.rung.sp { left: 146px; color: var(--c); font-weight: 600; }
+.rung:hover { color: var(--ink); }
+.tick { position: absolute; height: 1px; background: var(--muted); opacity: 0.6; }
+.tick.ref { left: 134px; width: 7px; }
+.tick.sp { left: 140px; width: 7px; background: var(--c); opacity: 1; }
+#cur { position: absolute; left: 96px; width: 90px; height: 0; border-top: 1.5px solid var(--accent); transition: none; }
+#cur span { position: absolute; left: -6px; top: -9px; background: var(--void); padding: 1px 4px; border-radius: 3px; transform: translateX(-100%); font: 600 11px var(--mono); color: var(--accent); white-space: nowrap; }
+#ladder .cap { position: absolute; left: 146px; font: 10px var(--mono); color: var(--faint); letter-spacing: 0.06em; text-transform: uppercase; }
+
+#hint { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--gutter) + env(safe-area-inset-bottom, 0px)); font: 11.5px var(--mono); color: var(--faint); white-space: nowrap; pointer-events: none; }
+#off { position: fixed; left: 0; top: 0; pointer-events: none; font: 600 11px var(--mono); color: var(--accent); white-space: nowrap; display: flex; align-items: center; gap: 6px; text-shadow: 0 1px 3px #000; }
+#off i { font-style: normal; display: inline-block; font-size: 15px; }
+
+@media (max-width: 1100px) { #hint { display: none; } }
+@media (max-width: 760px) {
+  #ladder { display: none; }
+  #jump { display: block; }
+  #top { padding: 12px 14px; }
+  h1 { font-size: 21px; }
+  #chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  .chip { flex: none; }
+  .panel { gap: 8px; }
+  .lede { display: none; }
+  #bottom .read { grid-template-columns: 78px 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<canvas id="c" tabindex="0" aria-label="3D map of the selected address space. One square foot is one address."></canvas>
+<div id="labels"></div>
+<div id="off" hidden><i>➜</i><span></span></div>
+
+<div class="left">
+<section class="panel" id="top" aria-label="Address space">
+  <header>
+    <h1>Keyspace <em>Walk</em></h1>
+    <p class="lede">One address is one square foot. The person on the grid is to scale. Zoom out until the number stops making sense.</p>
+  </header>
+  <div id="chips" role="group" aria-label="Choose a space"></div>
+  <details id="infod" open>
+    <summary><h2 id="sp-name"></h2></summary>
+    <p id="sp-blurb"></p>
+    <dl>
+      <div><dt>Squares</dt><dd id="sp-n"></dd></div>
+      <div><dt>Grid</dt><dd id="sp-map"></dd></div>
+      <div><dt>Side length</dt><dd id="sp-side"></dd></div>
+      <div><dt>Roughly</dt><dd id="sp-cmp"></dd></div>
+      <div><dt>Walk across at 3&nbsp;mph</dt><dd id="sp-walk"></dd></div>
+      <div><dt>Check every square at 10<sup>9</sup>/s</dt><dd id="sp-brute"></dd></div>
+    </dl>
+  </details>
+</section>
+
+<section class="panel" id="bottom" aria-label="Addresses">
+  <div class="read"><span class="k">Your feet</span><code id="r-feet"></code></div>
+  <div class="read"><span class="k">Pointer</span><code id="r-ptr">–</code></div>
+  <div class="read sel"><span class="k">Target</span><code id="r-sel">–</code></div>
+  <form id="find" autocomplete="off">
+    <input id="q" name="q" spellcheck="false" aria-label="Address to find">
+    <button class="b primary" type="submit">Go</button>
+    <button class="b" type="button" id="rand">Random</button>
+    <button class="b" type="button" id="home">Home</button>
+  </form>
+  <select id="jump" aria-label="Zoom to a scale"></select>
+  <p id="msg" role="status"></p>
+  <div class="status"><span>View <strong id="h-view"></strong></span><span id="h-speed"></span><span id="h-note"></span></div>
+</section>
+</div>
+
+<nav id="ladder" aria-label="Scale ladder"><div class="axis"></div><div id="cur"><span></span></div></nav>
+<div id="hint">drag: move · right-drag: turn · scroll: zoom · WASD: walk · click: pick a square · double-click: walk there</div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+/* ============================================================
+   Units. The plane is measured in feet: one foot square = one address.
+   Reference models use their own units and convert at render time.
+   ============================================================ */
+const FT_PER_M = 3.280839895;
+const M_PER_FT = 0.3048;
+const AU = 1.495978707e11;            // m
+const LY = 9.4607304725808e15;        // m
+const UNIVERSE_M = 8.8e26;            // diameter of the observable universe, m
+const UNIVERSE_FT = UNIVERSE_M * FT_PER_M;
+const WALK_FT_S = 4.4;                // 3 mph
+const TAU = Math.PI * 2;
+const FOV_K = 2 * Math.tan(THREE.MathUtils.degToRad(25)); // view height / camera distance
+
+/* ============================================================
+   Small math helpers
+   ============================================================ */
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const gauss = rng => { let u = 0; while (!u) u = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * rng()); };
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const hex = (n, len) => n.toString(16).padStart(len, '0');
+const bytesOf = (n, len) => { const b = new Uint8Array(len); for (let i = len - 1; i >= 0; i--) { b[i] = Number(n & 0xffn); n >>= 8n; } return b; };
+const bigOf = bytes => bytes.reduce((a, x) => (a << 8n) | BigInt(x), 0n);
+function bigSqrtCeil(n) {
+  if (n < 2n) return n;
+  const approx = BigInt(Math.floor(Math.sqrt(Number(n))));
+  let x = approx + approx / 1000000n + 2n, y;
+  for (;;) { y = (x + n / x) >> 1n; if (y >= x) break; x = y; }
+  return x * x === n ? x : x + 1n;
+}
+const bigAbsNum = b => Number(b < 0n ? -b : b);
+
+/* SHA-256, for Bitcoin address checksums. */
+const SHA = (() => {
+  const K = [], H = []; let n = 2, c = 0;
+  const frac = x => ((x - Math.floor(x)) * 4294967296) >>> 0;
+  while (c < 64) { let p = true; for (let d = 2; d * d <= n; d++) if (n % d === 0) { p = false; break; } if (p) { if (c < 8) H[c] = frac(Math.sqrt(n)); K[c] = frac(Math.cbrt(n)); c++; } n++; }
+  return { K, H };
+})();
+function sha256(msg) {
+  const { K, H } = SHA, l = msg.length;
+  const buf = new Uint8Array(((l + 9 + 63) >> 6) << 6); buf.set(msg); buf[l] = 0x80;
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(buf.length - 4, (l * 8) >>> 0); dv.setUint32(buf.length - 8, Math.floor(l * 8 / 4294967296));
+  const h = H.slice(), w = new Uint32Array(64), rotr = (x, r) => (x >>> r) | (x << (32 - r));
+  for (let off = 0; off < buf.length; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const a = w[i - 15], b = w[i - 2];
+      w[i] = (w[i - 16] + (rotr(a, 7) ^ rotr(a, 18) ^ (a >>> 3)) + w[i - 7] + (rotr(b, 17) ^ rotr(b, 19) ^ (b >>> 10))) >>> 0;
+    }
+    let [A, B, C, D, E, F, G, X] = h;
+    for (let i = 0; i < 64; i++) {
+      const t1 = (X + (rotr(E, 6) ^ rotr(E, 11) ^ rotr(E, 25)) + ((E & F) ^ (~E & G)) + K[i] + w[i]) >>> 0;
+      const t2 = ((rotr(A, 2) ^ rotr(A, 13) ^ rotr(A, 22)) + ((A & B) ^ (A & C) ^ (B & C))) >>> 0;
+      X = G; G = F; F = E; E = (D + t1) >>> 0; D = C; C = B; B = A; A = (t1 + t2) >>> 0;
+    }
+    [A, B, C, D, E, F, G, X].forEach((v, i) => { h[i] = (h[i] + v) >>> 0; });
+  }
+  const out = new Uint8Array(32); const odv = new DataView(out.buffer); h.forEach((v, i) => odv.setUint32(i * 4, v)); return out;
+}
+const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function b58encode(bytes) {
+  let n = bigOf(bytes), s = '';
+  while (n > 0n) { s = B58[Number(n % 58n)] + s; n /= 58n; }
+  for (const b of bytes) { if (b !== 0) break; s = '1' + s; }
+  return s;
+}
+function b58decode(s) {
+  let n = 0n;
+  for (const ch of s) { const v = B58.indexOf(ch); if (v < 0) throw Error('That is not a Base58 address.'); n = n * 58n + BigInt(v); }
+  const body = []; while (n > 0n) { body.unshift(Number(n & 0xffn)); n >>= 8n; }
+  let lead = 0; for (const ch of s) { if (ch !== '1') break; lead++; }
+  return new Uint8Array([...Array(lead).fill(0), ...body]);
+}
+
+/* ============================================================
+   Address spaces. Each one is a near-square grid, centred on the origin.
+   Square index i sits at column i mod width, row i div width.
+   ============================================================ */
+function uuidFmt(i) {
+  const u = ((i >> 74n) << 80n) | (4n << 76n) | (((i >> 62n) & 0xfffn) << 64n) | (2n << 62n) | (i & ((1n << 62n) - 1n));
+  const h = hex(u, 32);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+function uuidParse(s) {
+  const d = s.replace(/[^0-9a-f]/gi, '');
+  if (d.length !== 32) throw Error('Enter a UUID, like f47ac10b-58cc-4372-a567-0e02b2c3d479.');
+  const u = BigInt('0x' + d);
+  if (((u >> 76n) & 0xfn) !== 4n || ((u >> 62n) & 3n) !== 2n) throw Error('Only version-4 (random) UUIDs fit this grid.');
+  return ((u >> 80n) << 74n) | (((u >> 64n) & 0xfffn) << 62n) | (u & ((1n << 62n) - 1n));
+}
+function ipv6Fmt(i) {
+  const g = []; for (let k = 7; k >= 0; k--) g.push(Number((i >> BigInt(k * 16)) & 0xffffn).toString(16));
+  let best = -1, bl = 0;
+  for (let s = 0; s < 8;) { if (g[s] === '0') { let e = s; while (e < 8 && g[e] === '0') e++; if (e - s > bl && e - s >= 2) { best = s; bl = e - s; } s = e; } else s++; }
+  if (best < 0) return g.join(':');
+  return g.slice(0, best).join(':') + '::' + g.slice(best + bl).join(':');
+}
+function ipv6Parse(s) {
+  s = s.trim().toLowerCase();
+  const bad = () => Error('Enter an IPv6 address, like 2001:db8::1.');
+  const parts = s.split('::'); if (parts.length > 2) throw bad();
+  const grp = p => p === '' ? [] : p.split(':');
+  const a = grp(parts[0]), b = parts.length === 2 ? grp(parts[1]) : [];
+  const fill = parts.length === 2 ? 8 - a.length - b.length : 0;
+  if (parts.length === 2 ? fill < 1 : a.length !== 8) throw bad();
+  let v = 0n;
+  for (const x of [...a, ...Array(fill).fill('0'), ...b]) { if (!/^[0-9a-f]{1,4}$/.test(x)) throw bad(); v = (v << 16n) | BigInt('0x' + x); }
+  return v;
+}
+function btcFmt(i) {
+  const payload = new Uint8Array(21); payload.set(bytesOf(i, 20), 1);
+  const chk = sha256(sha256(payload)).slice(0, 4);
+  const full = new Uint8Array(25); full.set(payload); full.set(chk, 21);
+  return b58encode(full);
+}
+function btcParse(s) {
+  const b = b58decode(s.trim());
+  if (b.length !== 25 || b[0] !== 0) throw Error('Enter a legacy address that starts with 1, like 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa.');
+  const chk = sha256(sha256(b.slice(0, 21)));
+  for (let k = 0; k < 4; k++) if (chk[k] !== b[21 + k]) throw Error('The checksum does not match. Check for a typo.');
+  return bigOf(b.slice(1, 21));
+}
+const SECP_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
+
+const SPACES = [
+  { id: 'pin', name: '4-digit PIN', short: 'PIN', N: 10n ** 4n, base: 10, color: '#ffd166',
+    blurb: 'A bank card PIN. All 10,000 of them fit on the floor of a large house.', example: '4821',
+    fmt: i => i.toString().padStart(4, '0'),
+    parse: s => { if (!/^\d{4}$/.test(s.trim())) throw Error('Enter exactly 4 digits, like 4821.'); return BigInt(s.trim()); } },
+  { id: 'phone', name: 'US phone number', short: 'Phone', N: 10n ** 10n, base: 10, color: '#f79d65',
+    blurb: 'Ten digits. Real numbers have rules about the first digits, so the usable space is a bit smaller.', example: '(555) 867-5309',
+    fmt: i => { const s = i.toString().padStart(10, '0'); return `(${s.slice(0, 3)}) ${s.slice(3, 6)}-${s.slice(6)}`; },
+    parse: s => { const d = s.replace(/\D/g, ''); if (d.length !== 10) throw Error('Enter 10 digits, like 555 867 5309.'); return BigInt(d); } },
+  { id: 'ipv4', name: 'IPv4 address', short: 'IPv4', N: 2n ** 32n, base: 16, color: '#5ad1ff',
+    blurb: 'Every address on the original internet. The free pool ran out in 2011.', example: '8.8.8.8',
+    fmt: i => Array.from(bytesOf(i, 4)).join('.'),
+    parse: s => { const p = s.trim().split('.'); if (p.length !== 4 || p.some(x => !/^\d{1,3}$/.test(x) || +x > 255)) throw Error('Enter four numbers from 0 to 255, like 192.168.1.1.'); return p.reduce((a, x) => (a << 8n) | BigInt(x), 0n); } },
+  { id: 'mac', name: 'MAC address', short: 'MAC', N: 2n ** 48n, base: 16, color: '#7ee3a8',
+    blurb: 'The hardware ID of a network card.', example: '3c:22:fb:12:a0:7e',
+    fmt: i => Array.from(bytesOf(i, 6), b => hex(BigInt(b), 2)).join(':'),
+    parse: s => { const d = s.replace(/[^0-9a-f]/gi, ''); if (d.length !== 12) throw Error('Enter 12 hex digits, like 3c:22:fb:12:a0:7e.'); return BigInt('0x' + d); } },
+  { id: 'u64', name: '64-bit integer', short: 'u64', N: 2n ** 64n, base: 16, color: '#c3a6ff',
+    blurb: 'A database row ID or a Snowflake ID. Large, but a fast computer can count through it.', example: '0x9e3779b97f4a7c15',
+    fmt: i => '0x' + hex(i, 16),
+    parse: s => { let v; try { v = BigInt(s.trim()); } catch { throw Error('Enter a decimal number, or hex that starts with 0x.'); } if (v < 0n || v >= 2n ** 64n) throw Error('The number must be from 0 to 2^64 − 1.'); return v; } },
+  { id: 'uuid', name: 'UUID v4', short: 'UUID', N: 2n ** 122n, base: 16, color: '#ff8fab',
+    blurb: '122 random bits. The other 6 bits mark the version and the variant.', example: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+    fmt: uuidFmt, parse: uuidParse },
+  { id: 'ipv6', name: 'IPv6 address', short: 'IPv6', N: 2n ** 128n, base: 16, color: '#6f9bff',
+    blurb: 'The replacement for IPv4. An AES-128 key has the same number of values.', example: '2001:4860:4860::8888',
+    fmt: ipv6Fmt, parse: ipv6Parse },
+  { id: 'btc', name: 'Bitcoin address', short: 'BTC address', N: 2n ** 160n, base: 16, color: '#f7931a',
+    blurb: 'A 160-bit hash of a public key (legacy P2PKH). Ethereum addresses are also 160 bits.', example: '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
+    fmt: btcFmt, parse: btcParse },
+  { id: 'key', name: 'Bitcoin private key', short: 'Private key', N: SECP_N - 1n, base: 16, color: '#ff6b6b',
+    blurb: 'Any number from 1 to n − 1 on the secp256k1 curve. Ethereum keys use the same curve. To steal a wallet, you must stand on its exact square.', example: null,
+    fmt: i => hex(i + 1n, 64),
+    parse: () => { throw Error('Never paste a real private key into a web page. Use Random to pick a square.'); } },
+];
+for (const s of SPACES) {
+  s.w = bigSqrtCeil(s.N);
+  s.h = (s.N + s.w - 1n) / s.w;
+  s.minX = -(s.w / 2n); s.minZ = -(s.h / 2n);
+  s.sideFt = Number(s.w);
+  s.bits = Math.log2(Number(s.N));
+  s.pow = [1n]; const B = BigInt(s.base); for (let k = 1; k < 140; k++) s.pow.push(s.pow[k - 1] * B);
+  s.col3 = new THREE.Color(s.color);
+  s.sel = null;
+  if (s.example) { try { s.sel = s.parse(s.example); } catch (e) { console.warn(e); } }
+}
+
+/* ============================================================
+   Number and length formatting
+   ============================================================ */
+const sup = n => `10<sup>${n}</sup>`;
+function sci(x, digits = 2) {
+  if (!isFinite(x)) return '∞';
+  if (Math.abs(x) < 1e6) return x.toLocaleString('en-US', { maximumSignificantDigits: digits + 1 });
+  const e = Math.floor(Math.log10(x)); let m = x / 10 ** e;
+  if (m >= 9.995) { m /= 10; return `${m.toFixed(digits)} × ${sup(e + 1)}`; }
+  return `${m.toFixed(digits)} × ${sup(e)}`;
+}
+const sig = x => sci(x, 2);
+function fmtLen(ft) {
+  const m = ft * M_PER_FT;
+  if (ft < 5280) return `${sig(ft)} ft`;
+  const mi = ft / 5280;
+  if (mi < 2e6) return `${sig(mi)} mi <span class="dim">(${sig(m / 1000)} km)</span>`;
+  if (m < 0.05 * LY) return `${sig(m / AU)} AU`;
+  const ly = m / LY;
+  if (ly < 1e3) return `${sig(ly)} light-years`;
+  if (ly < 1e6) return `${sig(ly / 1e3)} thousand light-years`;
+  if (ly < 1e9) return `${sig(ly / 1e6)} million light-years`;
+  if (m < UNIVERSE_M * 3) return `${sig(ly / 1e9)} billion light-years`;
+  return `${sci(m / UNIVERSE_M)} × the observable universe`;
+}
+const fmtLenPlain = ft => fmtLen(ft).replace(/<span class="dim">|<\/span>/g, '').replace(/<sup>/g, '^').replace(/<\/sup>/g, '');
+function fmtTime(s) {
+  if (s < 60) return `${sig(s)} seconds`;
+  if (s < 3600) return `${sig(s / 60)} minutes`;
+  if (s < 86400 * 2) return `${sig(s / 3600)} hours`;
+  if (s < 86400 * 365.25 * 2) return `${sig(s / 86400)} days`;
+  const y = s / (86400 * 365.25);
+  let out = `${sig(y)} years`;
+  if (y > 1.38e10) out += ` <span class="dim">(${sci(y / 1.38e10)} × the age of the universe)</span>`;
+  return out;
+}
+function fmtCount(N) {
+  const n = Number(N);
+  const bits = Math.round(Math.log2(n));
+  const pow = (N & (N - 1n)) === 0n ? ` = 2<sup>${bits}</sup>` : (bits >= 32 ? ` ≈ 2<sup>${bits}</sup>` : '');
+  if (n < 1e15) return N.toLocaleString('en-US') + pow;
+  return sci(n) + pow;
+}
+
+/* ============================================================
+   Renderer, scene, camera.
+   The scene is rebuilt in "view units" every frame: 1 scene unit = D feet,
+   where D is the camera distance. This keeps the GPU's float math happy
+   from a 1 ft square up to 10^39 ft.
+   ============================================================ */
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const DPR = () => renderer.getPixelRatio();
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, 1, 0.0005, 2e5);
+scene.add(new THREE.HemisphereLight(0xc9dbff, 0x2a2f3c, 1.25));
+const sunLight = new THREE.DirectionalLight(0xfff2dd, 2.2); sunLight.position.set(0.6, 1, 0.35); scene.add(sunLight);
+scene.add(sunLight.target);
+
+/* Camera and walker state. Target position = BigInt feet + fraction. */
+const S = {
+  tx: 0n, tfx: 0.5, tz: 0n, tfz: 0.5,   // avatar / camera target
+  ax: 0n, afx: 0, az: 0n, afz: 0,       // anchor of the reference models
+  logD: Math.log10(17), logDGoal: Math.log10(17),
+  yaw: 0.75, pitch: 0.5, heading: 0.75, stride: 0, moving: 0,
+  space: SPACES[2],
+};
+const LOGD_MIN = Math.log10(2.2), LOGD_MAX = 39.7, POS_MAX = 10n ** 41n;
+function moveAxis(big, frac, d) {
+  if (!isFinite(d) || d === 0) return [big, frac];
+  if (Math.abs(d) < 1e15) { const f = frac + d, fl = Math.floor(f); return [big + BigInt(fl), f - fl]; }
+  return [big + BigInt(Math.round(d)), frac];
+}
+function moveTarget(dx, dz) {
+  [S.tx, S.tfx] = moveAxis(S.tx, S.tfx, dx);
+  [S.tz, S.tfz] = moveAxis(S.tz, S.tfz, dz);
+  if (S.tx > POS_MAX) S.tx = POS_MAX; if (S.tx < -POS_MAX) S.tx = -POS_MAX;
+  if (S.tz > POS_MAX) S.tz = POS_MAX; if (S.tz < -POS_MAX) S.tz = -POS_MAX;
+}
+const relX = (big, frac) => Number(big - S.tx) + (frac - S.tfx);
+const relZ = (big, frac) => Number(big - S.tz) + (frac - S.tfz);
+
+/* ============================================================
+   The state-space grid: one big shader quad around the target.
+   Grid lines come in levels of base^k feet (16 for binary spaces,
+   10 for decimal ones), so each major line is one more digit.
+   ============================================================ */
+const NLV = 6, NRECT = SPACES.length;
+const gridUniforms = {
+  uLv: { value: Array.from({ length: NLV }, () => new THREE.Vector4()) },
+  uBounds: { value: new THREE.Vector4() },
+  uRects: { value: Array.from({ length: NRECT }, () => new THREE.Vector4()) },
+  uRectCol: { value: Array.from({ length: NRECT }, () => new THREE.Vector3()) },
+  uRectA: { value: new Float32Array(NRECT) },
+  uSel: { value: new THREE.Vector4(1e9, 1e9, 1e9, 1e9) },
+  uHov: { value: new THREE.Vector4(1e9, 1e9, 1e9, 1e9) },
+  uCol: { value: new THREE.Color() },
+  uAcc: { value: new THREE.Color('#ffb547') },
+  uTime: { value: 0 },
+};
+const gridMat = new THREE.ShaderMaterial({
+  uniforms: gridUniforms, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  vertexShader: /* glsl */`
+    #include <common>
+    #include <logdepthbuf_pars_vertex>
+    varying vec2 vP;
+    void main() {
+      vP = position.xz;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      #include <logdepthbuf_vertex>
+    }`,
+  fragmentShader: /* glsl */`
+    #include <common>
+    #include <logdepthbuf_pars_fragment>
+    varying vec2 vP;
+    uniform vec4 uLv[${NLV}];
+    uniform vec4 uBounds;
+    uniform vec4 uRects[${NRECT}];
+    uniform vec3 uRectCol[${NRECT}];
+    uniform float uRectA[${NRECT}];
+    uniform vec4 uSel;
+    uniform vec4 uHov;
+    uniform vec3 uCol;
+    uniform vec3 uAcc;
+    uniform float uTime;
+    float gridLine(vec2 c) {
+      vec2 fw = max(fwidth(c), vec2(1e-7));
+      vec2 g = abs(fract(c - 0.5) - 0.5) / fw;
+      float l = 1.0 - min(min(g.x, g.y), 1.0);
+      return l * (1.0 - smoothstep(0.05, 0.28, max(fw.x, fw.y)));
+    }
+    float rectEdge(vec2 p, vec4 r, float px) {
+      vec2 fw = max(fwidth(p), vec2(1e-9));
+      bool inX = p.x > r.x - px * fw.x && p.x < r.z + px * fw.x;
+      bool inZ = p.y > r.y - px * fw.y && p.y < r.w + px * fw.y;
+      float dx = min(abs(p.x - r.x), abs(p.x - r.z)) / fw.x;
+      float dz = min(abs(p.y - r.y), abs(p.y - r.w)) / fw.y;
+      float e = 0.0;
+      if (inZ) e = max(e, 1.0 - smoothstep(px * 0.5, px, dx));
+      if (inX) e = max(e, 1.0 - smoothstep(px * 0.5, px, dz));
+      return e;
+    }
+    bool inRect(vec2 p, vec4 r) { return p.x >= r.x && p.x <= r.z && p.y >= r.y && p.y <= r.w; }
+    void main() {
+      #include <logdepthbuf_fragment>
+      vec2 p = vP;
+      float r = length(p);
+      vec3 col = mix(uCol, vec3(0.78, 0.86, 1.0), 0.45);
+      float a = 0.0;
+      if (inRect(p, uBounds)) {
+        float g = 0.0;
+        for (int i = 0; i < ${NLV}; i++) {
+          vec4 L = uLv[i];
+          if (L.w > 0.0) g = max(g, gridLine(p * L.x + L.yz) * L.w);
+        }
+        a = 0.03 + g;
+      }
+      if (inRect(p, uHov)) { a = max(a, 0.22); }
+      if (inRect(p, uSel)) { col = uAcc; a = max(a, 0.55 + 0.2 * sin(uTime * 4.0)); }
+      for (int i = 0; i < ${NRECT}; i++) {
+        float e = rectEdge(p, uRects[i], uRectA[i] > 0.6 ? 2.2 : 1.4) * uRectA[i];
+        if (e > a) { a = e; col = uRectCol[i]; }
+      }
+      a *= 1.0 - smoothstep(120.0, 1500.0, r);
+      gl_FragColor = vec4(col, a);
+    }`,
+});
+const gridMesh = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000).rotateX(-Math.PI / 2), gridMat);
+gridMesh.renderOrder = -1; gridMesh.frustumCulled = false;
+scene.add(gridMesh);
+
+/* ============================================================
+   Reference models. Each one uses its own unit (metres, km, AU, ly...).
+   ============================================================ */
+const std = (color, o = {}) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.85, metalness: 0, ...o });
+const box = (w, h, d, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); return m; };
+const lineMat = (color, opacity = 1) => new THREE.LineBasicMaterial({ color, transparent: opacity < 1, opacity, depthWrite: opacity >= 1 });
+function ring(r, color, opacity = 0.6, seg = 256, y = 0) {
+  const pts = new Float32Array(seg * 3);
+  for (let i = 0; i < seg; i++) { const a = i / seg * TAU; pts.set([Math.cos(a) * r, y, Math.sin(a) * r], i * 3); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+  return new THREE.LineLoop(g, lineMat(color, opacity));
+}
+function dots(pos, colors, size, opacity = 1) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos instanceof Float32Array ? pos : new Float32Array(pos), 3));
+  g.setAttribute('color', new THREE.BufferAttribute(colors instanceof Float32Array ? colors : new Float32Array(colors), 3));
+  const p = new THREE.Points(g, new THREE.PointsMaterial({ size: size * DPR(), sizeAttenuation: false, vertexColors: true, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending }));
+  p.frustumCulled = false; return p;
+}
+function flatRegion(pts, fill, opacity, y = 0.001) {
+  const g = new THREE.Group();
+  const shape = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(x, -z)));
+  const geo = new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: fill, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide }));
+  mesh.position.y = y; g.add(mesh);
+  const lp = new Float32Array(pts.length * 3); pts.forEach(([x, z], i) => lp.set([x, y * 2, z], i * 3));
+  const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.BufferAttribute(lp, 3));
+  g.add(new THREE.LineLoop(lg, lineMat(fill, 0.95)));
+  return g;
+}
+
+/* --- People-scale models (metres) --- */
+function buildHuman() {
+  const g = new THREE.Group();
+  const skin = std(0xd9a77f), shirt = std(0xff9f43), pants = std(0x2e4374), shoe = std(0x1b1b20), hair = std(0x2b1d14);
+  const cap = (r, l, m) => new THREE.Mesh(new THREE.CapsuleGeometry(r, l, 4, 10), m);
+  const legs = [], arms = [];
+  for (const sx of [-1, 1]) {
+    const hip = new THREE.Group(); hip.position.set(0.1 * sx, 0.92, 0);
+    const leg = cap(0.075, 0.72, pants); leg.position.y = -0.44; hip.add(leg);
+    hip.add(box(0.11, 0.07, 0.26, shoe, 0, -0.885, 0.05));
+    g.add(hip); legs.push(hip);
+    const sh = new THREE.Group(); sh.position.set(0.235 * sx, 1.47, 0);
+    const up = cap(0.062, 0.2, shirt); up.position.y = -0.13; sh.add(up);
+    const fore = cap(0.05, 0.24, skin); fore.position.y = -0.4; sh.add(fore);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), skin); hand.position.y = -0.6; sh.add(hand);
+    sh.rotation.z = 0.06 * sx;
+    g.add(sh); arms.push(sh);
+  }
+  g.add(box(0.34, 0.18, 0.2, pants, 0, 0.95, 0));
+  const torso = cap(0.16, 0.38, shirt); torso.position.y = 1.2; torso.scale.set(1.2, 1, 0.72); g.add(torso);
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.1, 8), skin); neck.position.y = 1.56; g.add(neck);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 14, 10), skin); head.position.y = 1.66; head.scale.set(0.92, 1, 1); g.add(head);
+  const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.116, 14, 8, 0, TAU, 0, Math.PI * 0.55), hair); hairCap.position.set(0, 1.67, -0.01); hairCap.scale.set(0.95, 1, 1.05); g.add(hairCap);
+  const eyeM = std(0x111111);
+  for (const sx of [-1, 1]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.013, 6, 4), eyeM); e.position.set(0.038 * sx, 1.68, 0.1); g.add(e); }
+  g.userData = { legs, arms };
+  return g;
+}
+function buildRoom() {
+  const g = new THREE.Group();
+  const wall = std(0xd9d2c3), wood = std(0x8b5e3c), dark = std(0x4b3a2c);
+  g.add(box(4.6, 2.6, 0.12, wall, 0, 1.3, -2.36));
+  g.add(box(0.12, 2.6, 4.6, wall, -2.36, 1.3, 0));
+  g.add(box(4.6, 0.1, 0.14, dark, 0, 0.05, -2.29));
+  g.add(box(0.14, 0.1, 4.6, dark, -2.29, 0.05, 0));
+  g.add(box(1.3, 1.0, 0.14, std(0x9fd0ff, { emissive: 0x2a4f7a, emissiveIntensity: 0.6 }), 0.9, 1.5, -2.33));
+  g.add(box(2.4, 0.015, 1.7, std(0x7d3346), 0.15, 0.008, 0.2));
+  // sofa against the left wall
+  const sofa = std(0x3d6b73);
+  g.add(box(0.85, 0.42, 2.0, sofa, -1.85, 0.21, 0.2), box(0.22, 0.48, 2.0, sofa, -2.2, 0.6, 0.2), box(0.85, 0.6, 0.18, sofa, -1.85, 0.3, -0.89), box(0.85, 0.6, 0.18, sofa, -1.85, 0.3, 1.29));
+  g.add(box(0.6, 0.06, 1.0, wood, -0.85, 0.42, 0.2), box(0.5, 0.39, 0.9, dark, -0.85, 0.195, 0.2));
+  // bookshelf on the back wall
+  g.add(box(1.1, 1.9, 0.32, dark, -1.0, 0.95, -2.12));
+  const rng = mulberry32(7), bookCols = [0xb5523b, 0x3b6db5, 0xe0c25a, 0x5aa36b, 0xcfcfcf, 0x7a4fa3];
+  for (let s = 0; s < 4; s++) for (let x = -1.48; x < -0.56;) {
+    const w = 0.04 + rng() * 0.05, h = 0.22 + rng() * 0.14;
+    g.add(box(w, h, 0.22, std(bookCols[Math.floor(rng() * bookCols.length)]), x + w / 2, 0.12 + s * 0.46 + h / 2, -2.08));
+    x += w + 0.008;
+  }
+  // floor lamp and plant
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.55, 6), dark); pole.position.set(-1.95, 0.78, -1.75); g.add(pole);
+  const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.22, 0.3, 12, 1, true), std(0xfff0c8, { emissive: 0xffc56b, emissiveIntensity: 0.9, side: THREE.DoubleSide })); shade.position.set(-1.95, 1.6, -1.75); g.add(shade);
+  const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.13, 0.35, 10), std(0xb8673e)); pot.position.set(1.9, 0.175, -1.9); g.add(pot);
+  const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 0), std(0x4f8f4a)); leaf.position.set(1.9, 0.75, -1.9); g.add(leaf);
+  return g;
+}
+function buildCar() {
+  const g = new THREE.Group();
+  const body = std(0xc8423b, { roughness: 0.5 }), glass = std(0x24324a, { roughness: 0.2 }), tyre = std(0x15161a);
+  g.add(box(4.5, 0.65, 1.8, body, 0, 0.6, 0));
+  const cab = box(2.3, 0.6, 1.62, glass, -0.25, 1.22, 0); g.add(cab);
+  g.add(box(2.36, 0.06, 1.66, body, -0.25, 1.53, 0));
+  for (const x of [-1.45, 1.4]) for (const z of [-0.84, 0.84]) {
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.24, 14).rotateX(Math.PI / 2), tyre); w.position.set(x, 0.34, z); g.add(w);
+  }
+  for (const z of [-0.6, 0.6]) g.add(box(0.05, 0.12, 0.3, std(0xfff6d8, { emissive: 0xfff2c0, emissiveIntensity: 0.8 }), 2.26, 0.72, z));
+  g.rotation.y = 0.5;
+  return g;
+}
+function buildTree() {
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.32, 3.4, 7), std(0x5b4130)); trunk.position.y = 1.7; g.add(trunk);
+  const leaves = std(0x3f7f45);
+  [[2.7, 4.7, 0, 0], [2.0, 6.6, 0.4, 0.2], [1.8, 5.2, -1.3, 0.6], [1.6, 5.4, 1.2, -0.8]].forEach(([r, y, x, z]) => { const m = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), leaves); m.position.set(x, y, z); g.add(m); });
+  return g;
+}
+function buildHouse() {
+  const g = new THREE.Group();
+  g.add(box(10, 5, 8, std(0xe8dcc4), 0, 2.5, 0));
+  const tri = new THREE.Shape([new THREE.Vector2(-4.6, 0), new THREE.Vector2(4.6, 0), new THREE.Vector2(0, 3.4)]);
+  const roof = new THREE.Mesh(new THREE.ExtrudeGeometry(tri, { depth: 10.8, bevelEnabled: false }).rotateY(Math.PI / 2).translate(-5.4, 5, 0), std(0x7a3b32));
+  g.add(roof);
+  g.add(box(1.1, 2.2, 0.1, std(0x41503f), 1.5, 1.1, 4.02));
+  const win = std(0xffe9a8, { emissive: 0xffc861, emissiveIntensity: 0.7 });
+  for (const x of [-3, -0.8, 3.4]) g.add(box(1.2, 1.1, 0.1, win, x, 2.6, 4.02));
+  g.add(box(0.8, 2.4, 0.8, std(0x8d5a44), -2.8, 7.2, -1.5));
+  g.rotation.y = -0.35;
+  return g;
+}
+/* --- City scale (metres) --- */
+function buildBlock() {
+  const g = new THREE.Group(), rng = mulberry32(11);
+  g.add(box(274, 0.4, 80, std(0x6f7480), 0, 0.2, 0));
+  const tones = [0x9aa3b5, 0xb8a993, 0x7d8799, 0xc9c2b4, 0x8e7f72, 0x5f6b82];
+  for (const zs of [-1, 1]) {
+    for (let x = -133; x < 131;) {
+      const w = Math.min(14 + rng() * 26, 133 - x), h = 12 + Math.pow(rng(), 2) * 150, d = 30 + rng() * 6;
+      g.add(box(w - 1, h, d, std(tones[Math.floor(rng() * tones.length)]), x + w / 2, h / 2 + 0.4, zs * (40 - d / 2 - 2)));
+      x += w;
+    }
+  }
+  g.rotation.y = 0.5;
+  return g;
+}
+function buildESB() {
+  const g = new THREE.Group(), stone = std(0xcfc6b0), metal = std(0xb9c0c8, { roughness: 0.4 });
+  [[129, 25, 57, 0], [92, 60, 52, 25], [62, 235, 42, 85], [46, 60, 32, 320], [28, 20, 24, 380]].forEach(([w, h, d, y]) => g.add(box(w, h, d, stone, 0, y + h / 2, 0)));
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 7, 43, 8), metal); mast.position.y = 421.5; g.add(mast);
+  return g;
+}
+/* --- Region scale (km) --- */
+function buildPark() {
+  const g = flatRegion([[-2, -0.4], [2, -0.4], [2, 0.4], [-2, 0.4]], 0x3f8f4c, 0.55);
+  const res = new THREE.Mesh(new THREE.CircleGeometry(1, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x3a7cc2, transparent: true, opacity: 0.85, depthWrite: false }));
+  res.scale.set(0.32, 1, 0.22); res.position.set(0.35, 0.003, 0); g.add(res);
+  g.rotation.y = 0.5;
+  return g;
+}
+function buildEverest() {
+  const geo = new THREE.ConeGeometry(10, 8.849, 28, 8);
+  const pos = geo.attributes.position, rngKey = (x, y, z) => mulberry32(Math.round(x * 97) * 73856093 ^ Math.round(y * 97) * 19349663 ^ Math.round(z * 97) * 83492791)();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    if (y > 4.4) continue;
+    const r = rngKey(x, y, z), k = y < -4.4 ? 0.85 + 0.3 * r : 0.7 + 0.6 * r;
+    pos.setXYZ(i, x * k, y + (y > -4.4 ? (r - 0.5) * 0.9 : 0), z * k);
+  }
+  geo.translate(0, 8.849 / 2, 0);
+  const ng = geo.toNonIndexed(); ng.computeVertexNormals();
+  const p = ng.attributes.position, cols = new Float32Array(p.count * 3), c = new THREE.Color();
+  for (let i = 0; i < p.count; i += 3) {
+    const y = (p.getY(i) + p.getY(i + 1) + p.getY(i + 2)) / 3;
+    c.set(y > 5.6 ? 0xf2f5fa : y > 3 ? 0x8a8478 : 0x6b6152);
+    for (let k = 0; k < 3; k++) cols.set([c.r, c.g, c.b], (i + k) * 3);
+  }
+  ng.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  return new THREE.Mesh(ng, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95 }));
+}
+function buildManhattan() {
+  const raw = [[0, 0], [-0.6, 1.0], [-0.9, 3.0], [-1.1, 6.0], [-1.0, 9.0], [-0.6, 12.0], [-0.1, 15.0], [0.5, 18.0], [1.2, 20.5], [1.8, 21.6], [2.4, 21.0], [2.2, 19.0], [2.6, 16.5], [2.9, 14.0], [2.4, 11.5], [2.6, 9.5], [2.1, 7.0], [1.9, 4.0], [2.2, 2.4], [1.6, 1.2], [0.8, 0.4]];
+  const g = flatRegion(raw.map(([x, n]) => [x - 0.9, -(n - 10.8)]), 0x9aa6bd, 0.35);
+  g.rotation.y = -0.5;
+  return g;
+}
+function buildColorado() { return flatRegion([[-305, -222], [305, -222], [305, 222], [-305, 222]], 0x5fb37a, 0.22); }
+function buildUSA() {
+  const ll = [[-124.7, 48.4], [-123, 49], [-95.2, 49], [-89.6, 48], [-84.8, 46.5], [-83, 46], [-82.5, 43], [-83.1, 42], [-79, 42.8], [-79, 43.3], [-76.5, 44.2], [-75, 45], [-71.5, 45], [-70, 46.7], [-69.2, 47.4], [-67.8, 47.1], [-67, 44.8], [-70.2, 43.6], [-70.6, 42.6], [-70, 41.7], [-71.9, 41.3], [-74, 40.6], [-74, 39], [-75.5, 38.5], [-76, 37], [-75.5, 35.2], [-77.9, 33.9], [-79.9, 32.7], [-81.4, 30.5], [-80, 26.7], [-80.4, 25.2], [-81.8, 26.6], [-82.8, 27.9], [-83.6, 29.9], [-85.4, 29.7], [-88, 30.4], [-89.6, 30.2], [-89.2, 29.1], [-91.5, 29.5], [-93.8, 29.7], [-95, 29.3], [-97.2, 27.7], [-97.2, 25.9], [-99.5, 27.5], [-101.4, 29.8], [-103, 29], [-104.5, 29.6], [-106.5, 31.8], [-108.2, 31.8], [-108.2, 31.3], [-111.1, 31.3], [-114.8, 32.5], [-117.1, 32.5], [-118.5, 34], [-120.6, 34.6], [-121.9, 36.6], [-122.5, 37.8], [-123.8, 39.8], [-124.4, 40.4], [-124.2, 42], [-124, 46.3]];
+  const k = Math.cos(39 * Math.PI / 180) * 111.32;
+  return flatRegion(ll.map(([lon, lat]) => [(lon + 96) * k, -(lat - 38.5) * 110.57]), 0xd9b26b, 0.18);
+}
+/* --- Planet scale (km) --- */
+function hash3(x, y, z) { let h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(z, 1442695041); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+function noise3(x, y, z) {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z), xf = x - xi, yf = y - yi, zf = z - zi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf), w = zf * zf * (3 - 2 * zf);
+  const L = (a, b, t) => a + (b - a) * t;
+  return L(L(L(hash3(xi, yi, zi), hash3(xi + 1, yi, zi), u), L(hash3(xi, yi + 1, zi), hash3(xi + 1, yi + 1, zi), u), v),
+           L(L(hash3(xi, yi, zi + 1), hash3(xi + 1, yi, zi + 1), u), L(hash3(xi, yi + 1, zi + 1), hash3(xi + 1, yi + 1, zi + 1), u), v), w);
+}
+function earthTexture() {
+  const W = 512, H = 256, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H);
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+    const lon = i / W * TAU, lat = Math.PI / 2 - j / H * Math.PI;
+    const x = Math.cos(lat) * Math.cos(lon) * 1.8 + 5, y = Math.sin(lat) * 1.8 + 5, z = Math.cos(lat) * Math.sin(lon) * 1.8 + 5;
+    let n = 0, amp = 0.5, f = 1; for (let o = 0; o < 5; o++) { n += amp * noise3(x * f, y * f, z * f); amp *= 0.5; f *= 2.03; }
+    let r, g, b;
+    if (Math.abs(lat) > 1.2 + (n - 0.5) * 0.4) { r = 236; g = 242; b = 248; }
+    else if (n > 0.53) { const t = clamp((n - 0.53) * 6, 0, 1); r = 70 + 90 * t; g = 120 + 40 * t; b = 60 + 30 * t; }
+    else { const t = clamp(n * 1.8, 0, 1); r = 14 + 20 * t; g = 46 + 50 * t; b = 96 + 70 * t; }
+    const k = (j * W + i) * 4; img.data[k] = r; img.data[k + 1] = g; img.data[k + 2] = b; img.data[k + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+function buildEarth() {
+  const g = new THREE.Group(), R = 6371;
+  const e = new THREE.Mesh(new THREE.SphereGeometry(R, 64, 32), new THREE.MeshStandardMaterial({ map: earthTexture(), roughness: 0.9 }));
+  e.position.y = R; e.rotation.z = 0.41; g.add(e);
+  const atm = new THREE.Mesh(new THREE.SphereGeometry(R * 1.045, 48, 24), new THREE.MeshBasicMaterial({ color: 0x6fb7ff, transparent: true, opacity: 0.16, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+  atm.position.y = R; g.add(atm);
+  return g;
+}
+function buildMoonOrbit() {
+  const g = new THREE.Group(), R = 6371;
+  const e = new THREE.Mesh(new THREE.SphereGeometry(R, 32, 16), new THREE.MeshStandardMaterial({ color: 0x3a78c9, roughness: 0.8 })); e.position.y = R; g.add(e);
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1737, 24, 12), std(0xbdbab2)); m.position.set(384400 * Math.cos(0.7), R, 384400 * Math.sin(0.7)); g.add(m);
+  g.add(ring(384400, 0x9fb3d1, 0.55, 256, R));
+  g.add(dots([0, R, 0, m.position.x, R, m.position.z], [0.5, 0.75, 1, 0.85, 0.85, 0.85], 3));
+  return g;
+}
+function glowTexture(inner, outer) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const ctx = cv.getContext('2d'), gr = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, inner); gr.addColorStop(0.25, outer); gr.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = gr; ctx.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(cv);
+}
+function buildSun() {
+  const g = new THREE.Group(), R = 696;
+  const s = new THREE.Mesh(new THREE.SphereGeometry(R, 48, 24), new THREE.MeshBasicMaterial({ color: 0xffd27a })); s.position.y = R; g.add(s);
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture('rgba(255,236,170,0.9)', 'rgba(255,170,60,0.35)'), blending: THREE.AdditiveBlending, depthWrite: false }));
+  glow.scale.setScalar(R * 4.2); glow.position.y = R; g.add(glow);
+  return g;
+}
+/* --- Solar system scale (AU) --- */
+const PLANETS = [['Mercury', 0.387, 0xb5aea4], ['Venus', 0.723, 0xe8cf9b], ['Earth', 1, 0x5c9cff], ['Mars', 1.524, 0xe0663e], ['Jupiter', 5.2, 0xd9b38c], ['Saturn', 9.58, 0xe6d3a0], ['Uranus', 19.2, 0x9fe0e6], ['Neptune', 30.05, 0x5a7dff]];
+function buildPlanets(list, rngSeed, belts) {
+  const g = new THREE.Group(), rng = mulberry32(rngSeed), pos = [], col = [], marks = [], c = new THREE.Color();
+  g.add(dots([0, 0, 0], [1, 0.85, 0.5], 7));
+  for (const [name, a, color] of list) {
+    g.add(ring(a, 0x7f8fb0, 0.45));
+    const th = rng() * TAU; c.set(color);
+    pos.push(Math.cos(th) * a, 0, Math.sin(th) * a); col.push(c.r, c.g, c.b);
+    marks.push({ name, x: Math.cos(th) * a, y: 0, z: Math.sin(th) * a });
+  }
+  g.add(dots(pos, col, 4.5));
+  for (const [r0, r1, n] of belts) {
+    const bp = new Float32Array(n * 3), bc = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { const r = r0 + (r1 - r0) * rng(), th = rng() * TAU; bp.set([Math.cos(th) * r, (rng() - 0.5) * 0.02 * r, Math.sin(th) * r], i * 3); bc.set([0.45, 0.42, 0.4], i * 3); }
+    g.add(dots(bp, bc, 1.3, 0.8));
+  }
+  return { obj: g, marks: [{ name: 'Sun', x: 0, y: 0, z: 0 }, ...marks] };
+}
+/* --- Interstellar and cosmic scale --- */
+function buildProxima() {
+  const g = new THREE.Group();
+  g.add(dots([-2.12, 0, 0, 2.12, 0, 0, 2.25, 0, 0.05], [1, 0.9, 0.6, 1, 0.45, 0.35, 1, 0.9, 0.7], 5));
+  const lg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-2.12, 0, 0), new THREE.Vector3(2.12, 0, 0)]);
+  const l = new THREE.Line(lg, new THREE.LineDashedMaterial({ color: 0x8a9bbb, dashSize: 0.12, gapSize: 0.08, transparent: true, opacity: 0.7 }));
+  l.computeLineDistances(); g.add(l);
+  g.add(ring(2.12, 0x34405a, 0.25, 128));
+  return { obj: g, marks: [{ name: 'Sun', x: -2.12, y: 0, z: 0 }, { name: 'Proxima Centauri', x: 2.12, y: 0, z: 0 }] };
+}
+function buildNeighborhood() {
+  const rng = mulberry32(5), n = 520, pos = new Float32Array(n * 3), col = new Float32Array(n * 3), c = new THREE.Color();
+  const tints = [0xffd2a1, 0xffe9c4, 0xffffff, 0xcfe0ff, 0xff9f80];
+  for (let i = 0; i < n; i++) {
+    const r = 50 * Math.cbrt(rng()), th = rng() * TAU, ph = Math.acos(2 * rng() - 1);
+    pos.set([r * Math.sin(ph) * Math.cos(th), Math.abs(r * Math.cos(ph)) * 0.35, r * Math.sin(ph) * Math.sin(th)], i * 3);
+    c.set(tints[Math.floor(rng() * tints.length)]); c.multiplyScalar(0.5 + rng() * 0.5); col.set([c.r, c.g, c.b], i * 3);
+  }
+  const g = new THREE.Group(); g.add(dots(pos, col, 2));
+  const named = [['Sun', 0, 0], ['Alpha Centauri', 4.37, -0.6], ['Sirius', -7.5, 4], ['Vega', 20, 15], ['Arcturus', -25, -28], ['Aldebaran', 40, -48]];
+  g.add(dots(named.flatMap(([, x, z]) => [x, 0.2, z]), named.flatMap(() => [1, 0.95, 0.8]), 3.5));
+  g.add(ring(50, 0x34405a, 0.3, 128));
+  return { obj: g, marks: named.map(([name, x, z]) => ({ name, x, y: 0.2, z })) };
+}
+function spiral(n, R, arms, rng, inner, outer, twist = 3.3, tilt = 0) {
+  const pos = new Float32Array(n * 3), col = new Float32Array(n * 3), ci = new THREE.Color(inner), co = new THREE.Color(outer), c = new THREE.Color();
+  for (let i = 0; i < n; i++) {
+    let x, y, z, t;
+    if (rng() < 0.2) {
+      const r = R * 0.17 * Math.pow(rng(), 1.4), th = rng() * TAU, ph = Math.acos(2 * rng() - 1);
+      x = r * Math.sin(ph) * Math.cos(th); z = r * Math.sin(ph) * Math.sin(th); y = r * Math.cos(ph) * 0.55; t = 0;
+    } else {
+      t = Math.pow(rng(), 0.75); const r = R * (0.08 + 0.92 * t), arm = Math.floor(rng() * arms);
+      const a = arm / arms * TAU + t * twist + gauss(rng) * 0.3 * (1 - 0.4 * t);
+      x = r * Math.cos(a) + gauss(rng) * R * 0.025; z = r * Math.sin(a) + gauss(rng) * R * 0.025; y = gauss(rng) * R * 0.012;
+    }
+    if (tilt) { const yy = y * Math.cos(tilt) - z * Math.sin(tilt); z = y * Math.sin(tilt) + z * Math.cos(tilt); y = yy; }
+    pos.set([x, y, z], i * 3);
+    c.copy(ci).lerp(co, t); const b = 0.55 + 0.45 * rng(); col.set([c.r * b, c.g * b, c.b * b], i * 3);
+  }
+  return { pos, col };
+}
+function buildMilkyWay() {
+  const rng = mulberry32(21), { pos, col } = spiral(26000, 50, 4, rng, 0xffe6b8, 0x8fb4ff, 3.6);
+  const g = new THREE.Group(); g.add(dots(pos, col, 1.4, 0.85));
+  const sx = 26 * Math.cos(2.2), sz = 26 * Math.sin(2.2);
+  g.add(dots([sx, 0.3, sz], [1, 0.75, 0.3], 5));
+  return { obj: g, marks: [{ name: 'Sun (you are here)', x: sx, y: 0.3, z: sz }, { name: 'Galactic center', x: 0, y: 0, z: 0 }] };
+}
+function buildLocalGroup() {
+  const g = new THREE.Group(), rng = mulberry32(31);
+  const add = (n, R, x, z, tilt, a, b) => { const s = spiral(n, R, 2, rng, a, b, 3, tilt); for (let i = 0; i < n; i++) { s.pos[i * 3] += x; s.pos[i * 3 + 2] += z; } g.add(dots(s.pos, s.col, 1.3, 0.9)); };
+  add(2500, 0.05, -1.25, 0, 0, 0xffe6b8, 0x8fb4ff);
+  add(4000, 0.11, 1.25, 0, 1.1, 0xfff0d0, 0xa9c4ff);
+  add(900, 0.03, 1.35, 0.8, 0.6, 0xe0e8ff, 0x9fc0ff);
+  const n = 90, p = new Float32Array(n * 3), c = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { const cx = i % 2 ? 1.25 : -1.25, r = Math.abs(gauss(rng)) * (i < 70 ? 0.35 : 1.8), th = rng() * TAU; p.set([cx + r * Math.cos(th), 0, r * Math.sin(th)], i * 3); c.set([0.7, 0.75, 0.9], i * 3); }
+  g.add(dots(p, c, 2));
+  return { obj: g, marks: [{ name: 'Milky Way', x: -1.25, y: 0, z: 0 }, { name: 'Andromeda', x: 1.25, y: 0, z: 0 }, { name: 'Triangulum', x: 1.35, y: 0, z: 0.8 }] };
+}
+function webCloud(n, R, seed, flat, tint, chains = 40) {
+  const rng = mulberry32(seed), nodes = [];
+  for (let c = 0; c < chains; c++) {
+    let x = (rng() * 2 - 1) * R, y = (rng() * 2 - 1) * R * flat, z = (rng() * 2 - 1) * R;
+    let dx = gauss(rng), dy = gauss(rng) * flat, dz = gauss(rng);
+    for (let s = 0; s < 7; s++) {
+      if (x * x + z * z + (y / Math.max(flat, 0.01)) ** 2 < R * R) nodes.push([x, y, z, rng() < 0.15 ? 2.6 : 1]);
+      const l = Math.hypot(dx, dy, dz) || 1; x += dx / l * R * 0.14; y += dy / l * R * 0.14 * flat; z += dz / l * R * 0.14;
+      dx += gauss(rng) * 0.6; dz += gauss(rng) * 0.6; dy += gauss(rng) * 0.6 * flat;
+    }
+  }
+  const pos = new Float32Array(n * 3), col = new Float32Array(n * 3), c0 = new THREE.Color(tint), c = new THREE.Color();
+  for (let i = 0; i < n; i++) {
+    const a = nodes[Math.floor(rng() * nodes.length)], b = nodes[Math.min(nodes.length - 1, nodes.indexOf(a) + 1)];
+    const t = rng() < 0.55 ? 0 : rng(), sp = R * 0.018 * (t === 0 ? a[3] : 0.6);
+    pos.set([a[0] + (b[0] - a[0]) * t + gauss(rng) * sp, a[1] + (b[1] - a[1]) * t + gauss(rng) * sp * flat, a[2] + (b[2] - a[2]) * t + gauss(rng) * sp], i * 3);
+    c.copy(c0).multiplyScalar(0.45 + 0.55 * rng()); col.set([c.r, c.g, c.b], i * 3);
+  }
+  return dots(pos, col, 1.5, 0.85);
+}
+function buildVirgo() {
+  const g = new THREE.Group(); g.add(webCloud(9000, 55, 41, 0.25, 0xcfd9ff, 30));
+  const vc = new Float32Array(1800 * 3), cc = new Float32Array(1800 * 3), rng = mulberry32(3);
+  for (let i = 0; i < 1800; i++) { vc.set([30 + gauss(rng) * 3, gauss(rng) * 1.5, 10 + gauss(rng) * 3], i * 3); cc.set([1, 0.9, 0.75], i * 3); }
+  g.add(dots(vc, cc, 1.6, 0.8));
+  g.add(dots([-24, 0, -8], [1, 0.75, 0.3], 5));
+  return { obj: g, marks: [{ name: 'Local Group', x: -24, y: 0, z: -8 }, { name: 'Virgo Cluster', x: 30, y: 0, z: 10 }] };
+}
+function buildLaniakea() {
+  const g = new THREE.Group(); g.add(webCloud(16000, 260, 51, 0.3, 0xb9c8ff, 60));
+  g.add(dots([60, 0, -40], [1, 0.75, 0.3], 5));
+  return { obj: g, marks: [{ name: 'Virgo Supercluster', x: 60, y: 0, z: -40 }, { name: 'Great Attractor', x: -40, y: 0, z: 30 }] };
+}
+function buildUniverse() {
+  const g = new THREE.Group(), R = 46.5;
+  const shell = new THREE.Mesh(new THREE.SphereGeometry(R, 48, 24), new THREE.MeshBasicMaterial({ color: 0x5e6fa0, transparent: true, opacity: 0.07, depthWrite: false, side: THREE.DoubleSide }));
+  shell.position.y = R; g.add(shell);
+  g.add(ring(R, 0x8091c0, 0.5, 256, R));
+  const w = webCloud(26000, R * 0.97, 61, 1, 0xa9b9ff, 160); w.position.y = R; g.add(w);
+  g.add(dots([0, R, 0], [1, 0.75, 0.3], 5));
+  return { obj: g, marks: [{ name: 'Milky Way (center)', x: 0, y: R, z: 0 }] };
+}
+
+const REFS = [
+  { id: 'room', name: 'Room', sub: '15 × 15 ft = 225 squares', unit: 1, size: 4.6, at: [0, 0], home: true, labelH: 2.9, build: buildRoom },
+  { id: 'car', cmp: false, name: 'Car', sub: '4.5 m', unit: 1, size: 4.5, at: [6.5, 4.5], labelH: 1.7, build: buildCar, ladder: false },
+  { id: 'tree', cmp: false, name: 'Oak tree', sub: '9 m tall', unit: 1, size: 9, at: [-8, 7.5], labelH: 9, build: buildTree, ladder: false },
+  { id: 'house', name: 'House', sub: '10 × 8 m', unit: 1, size: 12, at: [22, -15], labelH: 9, build: buildHouse },
+  { id: 'block', name: 'City block', sub: '274 × 80 m (Manhattan)', unit: 1, size: 274, labelH: 160, build: buildBlock },
+  { id: 'esb', cmp: false, name: 'Empire State Building', sub: '443 m tall', unit: 1, size: 443, labelH: 443, build: buildESB, ladder: false },
+  { id: 'park', name: 'Central Park', sub: '4 × 0.8 km', unit: 1000, size: 4000, labelH: 0.05, build: buildPark, ladder: 'Neighborhood' },
+  { id: 'everest', cmp: false, name: 'Mount Everest', sub: '8,849 m high', unit: 1000, size: 20000, labelH: 8.85, build: buildEverest, ladder: false },
+  { id: 'manhattan', name: 'Manhattan', sub: '21.6 km long', unit: 1000, size: 21600, labelH: 0.5, build: buildManhattan, ladder: 'City' },
+  { id: 'colorado', name: 'Colorado', sub: '610 × 450 km', unit: 1000, size: 610e3, labelH: 5, build: buildColorado, ladder: 'State' },
+  { id: 'usa', name: 'Contiguous United States', sub: '4,500 km wide', unit: 1000, size: 4.6e6, labelH: 20, build: buildUSA, ladder: 'Continent' },
+  { id: 'earth', name: 'Earth', sub: '12,742 km across', unit: 1000, size: 12.742e6, labelH: 12742, build: buildEarth, ladder: 'World' },
+  { id: 'moon', name: 'Moon’s orbit', sub: '769,000 km across', unit: 1000, size: 7.688e8, labelH: 30000, build: buildMoonOrbit, marks: [{ name: 'Earth', x: 0, y: 6371, z: 0 }, { name: 'Moon', x: 384400 * Math.cos(0.7), y: 6371, z: 384400 * Math.sin(0.7) }] },
+  { id: 'sun', name: 'Sun', sub: '1.39 million km across', unit: 1e6, size: 1.392e9, labelH: 1392, build: buildSun },
+  { id: 'inner', name: 'Inner planets', sub: 'Mars orbit, 3 AU across', unit: AU, size: 3.05 * AU, labelH: 0.1, build: () => buildPlanets(PLANETS.slice(0, 4), 1, [[2.2, 3.2, 1500]]) },
+  { id: 'solar', name: 'Solar system', sub: 'Neptune orbit, 60 AU across', unit: AU, size: 60.1 * AU, labelH: 2, build: () => buildPlanets(PLANETS, 2, [[2.2, 3.2, 1200], [30, 50, 2500]]) },
+  { id: 'proxima', name: 'Nearest star', sub: 'Proxima Centauri, 4.24 ly', unit: LY, size: 4.24 * LY, labelH: 0.3, build: buildProxima },
+  { id: 'hood', name: 'Star neighborhood', sub: '100 light-years across', unit: LY, size: 100 * LY, labelH: 8, build: buildNeighborhood },
+  { id: 'mw', name: 'Milky Way', sub: '100,000 light-years', unit: 1000 * LY, size: 1e5 * LY, labelH: 4, build: buildMilkyWay, ladder: 'Galaxy' },
+  { id: 'lg', name: 'Local Group', sub: '10 million light-years', unit: 1e6 * LY, size: 1e7 * LY, labelH: 0.5, build: buildLocalGroup },
+  { id: 'virgo', name: 'Virgo Supercluster', sub: '110 million light-years', unit: 1e6 * LY, size: 1.1e8 * LY, labelH: 8, build: buildVirgo },
+  { id: 'lani', name: 'Laniakea Supercluster', sub: '520 million light-years', unit: 1e6 * LY, size: 5.2e8 * LY, labelH: 40, build: buildLaniakea },
+  { id: 'universe', name: 'Observable universe', sub: '93 billion light-years', unit: 1e9 * LY, size: UNIVERSE_M, labelH: 93, build: buildUniverse },
+];
+
+const labelsEl = document.getElementById('labels');
+function makeLabel(cls, html, color) {
+  const d = document.createElement('div'); d.className = 'lbl ' + cls; d.innerHTML = html; d.hidden = true;
+  if (color) d.style.color = color;
+  labelsEl.appendChild(d); return d;
+}
+let autoI = 0;
+for (const r of REFS) {
+  const built = r.build();
+  r.obj = built.isObject3D ? built : built.obj;
+  if (!built.isObject3D && built.marks) r.marks = built.marks;
+  r.obj.visible = false; scene.add(r.obj);
+  r.sizeFt = r.size * FT_PER_M;
+  if (r.at) { r.ox = r.at[0]; r.oz = r.at[1]; }
+  else { const a = 0.9 + autoI++ * 2.39996, d = r.size * 0.85 + 30; r.ox = Math.cos(a) * d; r.oz = Math.sin(a) * d; }
+  r.label = makeLabel('ref', `<b>${r.name}</b><span>${r.sub}</span>`);
+  r.markEls = (r.marks || []).map(m => makeLabel('mark', m.name));
+}
+const human = buildHuman(); scene.add(human);
+const youLabel = makeLabel('you', '<b>You</b><span>5 ft 9 in</span>');
+const spaceLabels = SPACES.map(s => makeLabel('space', `<b>${s.short}</b><span>${fmtLenPlain(s.sideFt)} wide</span>`, s.color));
+
+/* Beacon over the target square, sized in screen terms so it shows at any zoom. */
+const beacon = new THREE.Group();
+const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.0018, 0.0018, 0.13, 6).translate(0, 0.065, 0), new THREE.MeshBasicMaterial({ color: 0xffb547, transparent: true, opacity: 0.85, depthWrite: false }));
+const halo = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffb547, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+beacon.add(beam, halo); scene.add(beacon);
+const selLabel = makeLabel('you', '');
+
+/* Background stars, faded in once you leave the ground. */
+const stars = (() => {
+  const rng = mulberry32(99), n = 4000, p = new Float32Array(n * 3), c = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { const th = rng() * TAU, ph = Math.acos(2 * rng() - 1), r = 9000; p.set([r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph), r * Math.sin(ph) * Math.sin(th)], i * 3); const b = 0.3 + 0.7 * rng() ** 3; c.set([b, b, b * 1.1], i * 3); }
+  const s = dots(p, c, 1.5, 1); s.material.blending = THREE.NormalBlending; scene.add(s); return s;
+})();
+
+/* ============================================================
+   UI wiring
+   ============================================================ */
+const $ = id => document.getElementById(id);
+const chipsEl = $('chips');
+for (const s of SPACES) {
+  const b = document.createElement('button'); b.className = 'chip'; b.type = 'button'; b.style.setProperty('--c', s.color);
+  b.innerHTML = `<i></i>${s.short}`; b.setAttribute('aria-pressed', 'false'); b.id = 'chip-' + s.id;
+  b.addEventListener('click', () => selectSpace(s)); chipsEl.appendChild(b);
+}
+function compareSide(ft) {
+  const m = ft * M_PER_FT;
+  if (m >= UNIVERSE_M) return `The observable universe would fit across it ${sci(m / UNIVERSE_M)} times.`;
+  let best = null; for (const r of REFS) if (r.cmp !== false && r.size <= m * 1.15 && (!best || r.size > best.size)) best = r;
+  if (!best) return 'a large room';
+  const k = m / best.size;
+  return k < 1.4 ? `about the size of ${best.name} <span class="dim">(${best.sub})</span>` : `${sig(k)} × ${best.name} <span class="dim">(${best.sub})</span>`;
+}
+function selectSpace(s) {
+  S.space = s;
+  for (const sp of SPACES) $('chip-' + sp.id).setAttribute('aria-pressed', sp === s ? 'true' : 'false');
+  $('sp-name').textContent = s.name;
+  $('sp-blurb').textContent = s.blurb;
+  $('sp-n').innerHTML = fmtCount(s.N);
+  $('sp-map').innerHTML = s.w - s.h <= 1n ? `${fmtCount(s.w)} ft square` : `${fmtCount(s.w)} × ${fmtCount(s.h)} ft`;
+  $('sp-side').innerHTML = fmtLen(s.sideFt);
+  $('sp-cmp').innerHTML = compareSide(s.sideFt);
+  $('sp-walk').innerHTML = fmtTime(s.sideFt / WALK_FT_S);
+  $('sp-brute').innerHTML = fmtTime(Number(s.N) / 1e9);
+  const q = $('q'); q.value = '';
+  q.placeholder = s.example ? `e.g. ${s.example}` : 'Use Random for this space';
+  q.disabled = !s.example;
+  setMsg('');
+  document.querySelectorAll('.rung.sp').forEach(el => el.style.fontWeight = el.dataset.id === s.id ? '800' : '600');
+}
+function setMsg(t, err = false) { const m = $('msg'); m.textContent = t; m.className = err ? 'err' : ''; }
+
+function cellAt(bx, bz, s = S.space) {
+  const col = bx - s.minX, row = bz - s.minZ;
+  if (col < 0n || row < 0n || col >= s.w || row >= s.h) return { col, row, idx: null, out: true };
+  const idx = row * s.w + col;
+  return { col, row, idx: idx < s.N ? idx : null, out: false };
+}
+function describeCell(c, s = S.space) {
+  if (c.out) return 'outside this space';
+  if (c.idx === null) return 'past the last address';
+  return s.fmt(c.idx);
+}
+function cellOrigin(idx, s = S.space) { return [s.minX + idx % s.w, s.minZ + idx / s.w]; }
+
+$('find').addEventListener('submit', e => {
+  e.preventDefault();
+  const s = S.space;
+  try { const idx = s.parse($('q').value || s.example); goToIndex(idx, true); }
+  catch (err) { setMsg(err.message, true); }
+});
+$('rand').addEventListener('click', () => {
+  const s = S.space, bytes = new Uint8Array(Math.ceil(s.bits / 8) + 8); crypto.getRandomValues(bytes);
+  goToIndex(bigOf(bytes) % s.N, true, 'A random square. Nobody chose it, and nobody else will find it.');
+});
+$('home').addEventListener('click', () => { flyTo(0n, 0.5, 0n, 0.5, Math.log10(17)); setMsg('Back home.'); });
+function goToIndex(idx, fly, note) {
+  const s = S.space; s.sel = idx;
+  const [bx, bz] = cellOrigin(idx, s);
+  const dist = Math.hypot(relX(bx, 0.5), relZ(bz, 0.5));
+  setMsg(note || `${s.fmt(idx)} is ${fmtLenPlain(dist)} from where you stood.`);
+  if (fly) flyTo(bx, 0.5, bz, 0.5, Math.log10(17));
+}
+
+/* Scale ladder */
+const LAD_MIN = 0, LAD_MAX = 40;
+const ladderEl = $('ladder'), jumpEl = $('jump');
+const viewWidthFor = sizeFt => sizeFt * 2.6;
+const logDForWidth = w => Math.log10(w / (FOV_K * (innerWidth / innerHeight)));
+function buildLadder() {
+  ladderEl.querySelectorAll('.rung, .tick, .cap').forEach(e => e.remove());
+  const H = ladderEl.clientHeight, yOf = l => (1 - (l - LAD_MIN) / (LAD_MAX - LAD_MIN)) * H;
+  const place = (items) => {
+    items.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < items.length; i++) items[i].ly = Math.max(items[i].y, items[i - 1].ly + 13);
+    if (items.length && items[items.length - 1].ly > H - 4) { items[items.length - 1].ly = H - 4; for (let i = items.length - 2; i >= 0; i--) items[i].ly = Math.min(items[i].ly, items[i + 1].ly - 13); }
+  };
+  const refs = REFS.filter(r => r.ladder !== false).map(r => ({ r, y: yOf(Math.log10(r.sizeFt)), ly: 0 }));
+  refs.forEach(o => o.ly = o.y); place(refs);
+  const sps = SPACES.map(s => ({ s, y: yOf(Math.log10(s.sideFt)), ly: 0 })); sps.forEach(o => o.ly = o.y); place(sps);
+  for (const o of refs) {
+    const t = document.createElement('div'); t.className = 'tick ref'; t.style.top = o.y + 'px'; ladderEl.appendChild(t);
+    const b = document.createElement('button'); b.className = 'rung ref'; b.type = 'button'; b.style.top = o.ly + 'px';
+    b.textContent = typeof o.r.ladder === 'string' ? o.r.ladder : o.r.name; b.title = `${o.r.name}: ${o.r.sub}`;
+    b.addEventListener('click', () => zoomToRef(o.r)); ladderEl.appendChild(b);
+  }
+  for (const o of sps) {
+    const t = document.createElement('div'); t.className = 'tick sp'; t.style.top = o.y + 'px'; t.style.setProperty('--c', o.s.color); ladderEl.appendChild(t);
+    const b = document.createElement('button'); b.className = 'rung sp'; b.type = 'button'; b.style.top = o.ly + 'px'; b.dataset.id = o.s.id;
+    b.style.setProperty('--c', o.s.color); b.style.fontWeight = o.s === S.space ? '800' : '600';
+    b.textContent = o.s.short; b.title = `Show the whole ${o.s.name} space`;
+    b.addEventListener('click', () => showWholeSpace(o.s)); ladderEl.appendChild(b);
+  }
+  const cap = document.createElement('div'); cap.className = 'cap'; cap.style.top = '-2px'; cap.textContent = 'spaces'; ladderEl.appendChild(cap);
+  const cap2 = cap.cloneNode(); cap2.textContent = 'scale'; cap2.style.left = '76px'; ladderEl.appendChild(cap2);
+}
+function fillJump() {
+  jumpEl.innerHTML = '<option value="">Zoom to a scale…</option>' +
+    REFS.filter(r => r.ladder !== false).map(r => `<option value="r:${r.id}">${typeof r.ladder === 'string' ? r.ladder + ' · ' : ''}${r.name}</option>`).join('') +
+    SPACES.map(s => `<option value="s:${s.id}">Whole ${s.name} space</option>`).join('');
+}
+jumpEl.addEventListener('change', () => {
+  const [k, id] = jumpEl.value.split(':'); jumpEl.value = '';
+  if (k === 'r') zoomToRef(REFS.find(r => r.id === id)); else if (k === 's') showWholeSpace(SPACES.find(s => s.id === id));
+});
+function zoomToRef(r) {
+  flyTo(S.tx, S.tfx, S.tz, S.tfz, logDForWidth(viewWidthFor(r.sizeFt) + Math.hypot(r.ox, r.oz) * FT_PER_M * 1.2));
+  setMsg(`${r.name}: ${r.sub}.`);
+}
+function showWholeSpace(s) {
+  selectSpace(s);
+  flyTo(0n, 0.5, 0n, 0.5, logDForWidth(s.sideFt * 1.9), false);
+  setMsg(`The whole ${s.name} space: ${fmtLenPlain(s.sideFt)} on each side.`);
+}
+
+/* ============================================================
+   Camera flight. Zoom out, pan across, zoom back in.
+   ============================================================ */
+let fly = null;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+function flyTo(bx, fx, bz, fz, logDEnd, moveAnchor = true) {
+  const dX = bx - S.tx, dZ = bz - S.tz;
+  const dist = Math.hypot(Number(dX) + fx - S.tfx, Number(dZ) + fz - S.tfz);
+  const a = S.logD, b = clamp(logDEnd, LOGD_MIN, LOGD_MAX);
+  const peak = Math.max(a, b, dist > 1 ? Math.log10(dist * 0.9) : 0) + 0.12;
+  const c = 2 * peak - (a + b) / 2;
+  const dur = reduceMotion ? 350 : clamp(900 + 115 * (peak - Math.min(a, b)), 900, 5600);
+  fly = { t0: performance.now(), dur, sx: S.tx, sfx: S.tfx, sz: S.tz, sfz: S.tfz, dX, dZ, efx: fx, efz: fz, a, b, c, moveAnchor, ex: bx, ez: bz, mid: false };
+}
+function stepFly(now) {
+  const f = fly, t = clamp((now - f.t0) / f.dur, 0, 1);
+  const s = smooth(0, 1, clamp((t - 0.15) / 0.7, 0, 1));
+  const S12 = BigInt(Math.round(s * 1e12));
+  S.tx = f.sx + f.dX * S12 / 1000000000000n; S.tfx = f.sfx + (f.efx - f.sfx) * s;
+  S.tz = f.sz + f.dZ * S12 / 1000000000000n; S.tfz = f.sfz + (f.efz - f.sfz) * s;
+  S.logD = S.logDGoal = (1 - t) ** 2 * f.a + 2 * t * (1 - t) * f.c + t * t * f.b;
+  if (f.moveAnchor && !f.mid && t >= 0.5) { f.mid = true; S.ax = f.ex; S.az = f.ez; S.afx = 0; S.afz = 0; }
+  if (t >= 1) fly = null;
+}
+
+/* ============================================================
+   Input: drag to pan, right-drag to turn, wheel or pinch to zoom, WASD to walk.
+   ============================================================ */
+const ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), tmpV = new THREE.Vector3(), ndc = new THREE.Vector2();
+function groundAt(x, y, out = new THREE.Vector3()) {
+  ndc.set(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.ray.intersectPlane(plane, out);
+  if (!hit || out.length() > 400) return null;
+  return out;
+}
+const pointers = new Map(); let dragMode = null, moved = 0, pinch = null, lastPtr = null;
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId); canvas.focus({ preventScroll: true });
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  moved = 0; fly = null;
+  dragMode = (e.button === 2 || e.shiftKey || e.ctrlKey || e.altKey) ? 'rotate' : 'pan';
+  if (pointers.size === 2) pinch = pinchState();
+});
+function pinchState() { const [a, b] = [...pointers.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y), ang: Math.atan2(b.y - a.y, b.x - a.x), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; }
+canvas.addEventListener('pointermove', e => {
+  lastPtr = { x: e.clientX, y: e.clientY };
+  const prev = pointers.get(e.pointerId); if (!prev) return;
+  const cur = { x: e.clientX, y: e.clientY };
+  moved += Math.abs(cur.x - prev.x) + Math.abs(cur.y - prev.y);
+  if (pointers.size === 1) {
+    if (dragMode === 'pan') panScreen(prev, cur);
+    else { S.yaw -= (cur.x - prev.x) * 0.006; S.pitch = clamp(S.pitch + (cur.y - prev.y) * 0.005, 0.12, 1.53); }
+    pointers.set(e.pointerId, cur);
+  } else if (pointers.size === 2) {
+    pointers.set(e.pointerId, cur);
+    const p = pinchState();
+    if (pinch) {
+      S.logDGoal = clamp(S.logDGoal - Math.log10(p.d / pinch.d), LOGD_MIN, LOGD_MAX); S.logD = S.logDGoal;
+      S.yaw += p.ang - pinch.ang;
+      panScreen({ x: pinch.mx, y: pinch.my }, { x: p.mx, y: p.my });
+    }
+    pinch = p;
+  }
+});
+function endPointer(e) {
+  if (!pointers.has(e.pointerId)) return;
+  if (pointers.size === 1 && moved < 6 && e.button === 0 && dragMode === 'pan') pickAt(e.clientX, e.clientY);
+  pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null;
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('pointerleave', () => { lastPtr = null; });
+canvas.addEventListener('dblclick', e => {
+  const g = groundAt(e.clientX, e.clientY, new THREE.Vector3()); if (!g) return;
+  const D = 10 ** S.logD;
+  const [bx] = moveAxis(S.tx, S.tfx, g.x * D), [bz] = moveAxis(S.tz, S.tfz, g.z * D);
+  flyTo(bx, 0.5, bz, 0.5, Math.min(S.logD, Math.log10(17)), false);
+});
+canvas.addEventListener('wheel', e => {
+  e.preventDefault(); fly = null;
+  const k = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
+  S.logDGoal = clamp(S.logDGoal + e.deltaY * k * 0.0011, LOGD_MIN, LOGD_MAX);
+}, { passive: false });
+const a1 = new THREE.Vector3(), a2 = new THREE.Vector3();
+function panScreen(p0, p1) {
+  const g0 = groundAt(p0.x, p0.y, a1), g1 = groundAt(p1.x, p1.y, a2); if (!g0 || !g1) return;
+  const D = 10 ** S.logD, dx = (g0.x - g1.x) * D, dz = (g0.z - g1.z) * D;
+  moveTarget(dx, dz); noteMove(dx, dz);
+}
+function noteMove(dx, dz) {
+  const l = Math.hypot(dx, dz); if (!l) return;
+  S.heading = Math.atan2(dx, dz); S.stride += l; S.moving = 0.15;
+}
+function pickAt(x, y) {
+  const g = groundAt(x, y, new THREE.Vector3()); if (!g) return;
+  const D = 10 ** S.logD, s = S.space;
+  const [bx] = moveAxis(S.tx, S.tfx, g.x * D), [bz] = moveAxis(S.tz, S.tfz, g.z * D);
+  const c = cellAt(bx, bz);
+  if (c.idx === null) { setMsg(c.out ? 'That square is outside this space.' : 'That square is past the last valid address.', true); return; }
+  s.sel = c.idx; setMsg(`Picked ${s.fmt(c.idx)}. Double-click to walk there.`);
+}
+const keys = new Set();
+addEventListener('keydown', e => {
+  if (e.target.closest('input, select, textarea')) return;
+  const k = e.key.toLowerCase();
+  if (['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', '+', '=', '-', '_', 'shift'].includes(k)) { keys.add(k); if (k.startsWith('arrow')) e.preventDefault(); fly = null; }
+});
+addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+addEventListener('blur', () => keys.clear());
+
+/* ============================================================
+   Frame loop
+   ============================================================ */
+const v3 = new THREE.Vector3(), bgNear = new THREE.Color(0x0b1322), bgFar = new THREE.Color(0x010104), bg = new THREE.Color();
+let W = 1, H = 1, last = performance.now(), hudTick = 0;
+function resize() {
+  W = innerWidth; H = innerHeight;
+  renderer.setSize(W, H, false); camera.aspect = W / H; camera.updateProjectionMatrix();
+  buildLadder();
+}
+addEventListener('resize', resize);
+
+function project(x, y, z) {
+  v3.set(x, y, z).project(camera);
+  if (v3.z > 1 || v3.z < -1) return null;
+  return { x: (v3.x + 1) / 2 * W, y: (1 - v3.y) / 2 * H, on: Math.abs(v3.x) < 1.05 && Math.abs(v3.y) < 1.05 };
+}
+function placeLabel(el, p, opacity = 1) {
+  if (!p || !p.on || opacity <= 0.02) { el.hidden = true; return; }
+  el.hidden = false; el.style.opacity = opacity.toFixed(2);
+  el.style.transform = `translate(${(p.x + 10).toFixed(1)}px, ${(p.y - 8).toFixed(1)}px)`;
+}
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (fly) stepFly(now);
+  else S.logD += (S.logDGoal - S.logD) * (1 - Math.exp(-dt * 9));
+
+  // keyboard
+  if (keys.size) {
+    const D0 = 10 ** S.logD, fast = keys.has('shift') ? 5 : 1;
+    const speed = Math.max(WALK_FT_S, D0 * 0.37) * fast;
+    let f = 0, r = 0;
+    if (keys.has('w') || keys.has('arrowup')) f += 1; if (keys.has('s') || keys.has('arrowdown')) f -= 1;
+    if (keys.has('d') || keys.has('arrowright')) r += 1; if (keys.has('a') || keys.has('arrowleft')) r -= 1;
+    if (keys.has('q')) S.yaw += dt * 1.6; if (keys.has('e')) S.yaw -= dt * 1.6;
+    if (keys.has('+') || keys.has('=')) S.logDGoal = clamp(S.logDGoal - dt * 1.4, LOGD_MIN, LOGD_MAX);
+    if (keys.has('-') || keys.has('_')) S.logDGoal = clamp(S.logDGoal + dt * 1.4, LOGD_MIN, LOGD_MAX);
+    if (f || r) {
+      const l = Math.hypot(f, r), sy = Math.sin(S.yaw), cy = Math.cos(S.yaw);
+      const dx = (-sy * f + cy * r) / l * speed * dt, dz = (-cy * f - sy * r) / l * speed * dt;
+      moveTarget(dx, dz); noteMove(dx, dz);
+    }
+  }
+
+  const D = 10 ** S.logD, s = S.space;
+
+  // camera
+  const cp = Math.cos(S.pitch);
+  camera.position.set(Math.sin(S.yaw) * cp, Math.sin(S.pitch), Math.cos(S.yaw) * cp);
+  camera.lookAt(0, Math.min(2.9 / D, 0.3), 0);
+  camera.updateMatrixWorld();
+
+  // sky
+  const space01 = smooth(6.5, 9.5, S.logD);
+  bg.copy(bgNear).lerp(bgFar, space01); renderer.setClearColor(bg);
+  stars.material.opacity = 0.15 + 0.85 * space01;
+  stars.position.copy(camera.position);
+
+  // grid levels
+  const Bn = s.base, k0 = Math.max(0, Math.floor(Math.log(D * 0.004) / Math.log(Bn)));
+  for (let i = 0; i < NLV; i++) {
+    const k = k0 + i, L = gridUniforms.uLv.value[i];
+    if (k >= s.pow.length) { L.set(0, 0, 0, 0); continue; }
+    const sb = s.pow[k], sf = Number(sb);
+    const mx = ((S.tx - s.minX) % sb + sb) % sb, mz = ((S.tz - s.minZ) % sb + sb) % sb;
+    const wgt = clamp(0.16 + 0.11 * Math.log(sf / (D * 0.01)) / Math.log(Bn), 0.14, 0.62);
+    L.set(D / sf, (Number(mx) + S.tfx) / sf, (Number(mz) + S.tfz) / sf, wgt);
+  }
+  const C = v => clamp(v, -1e7, 1e7);
+  SPACES.forEach((sp, i) => {
+    const x0 = relX(sp.minX, 0) / D, z0 = relZ(sp.minZ, 0) / D, x1 = x0 + Number(sp.w) / D, z1 = z0 + Number(sp.h) / D;
+    gridUniforms.uRects.value[i].set(C(x0), C(z0), C(x1), C(z1));
+    gridUniforms.uRectCol.value[i].set(sp.col3.r, sp.col3.g, sp.col3.b);
+    gridUniforms.uRectA.value[i] = sp === s ? 0.95 : 0.3;
+    if (sp === s) gridUniforms.uBounds.value.set(C(x0), C(z0), C(x1), C(z1));
+    // space label at its near-left corner
+    const app = sp.sideFt / D;
+    const p = app > 0.2 && app < 60 ? project(C(x0), 0, C(z1)) : null;
+    placeLabel(spaceLabels[i], p, sp === s ? 1 : 0.6 * smooth(0.2, 0.5, app));
+  });
+  gridUniforms.uCol.value.copy(s.col3);
+  gridUniforms.uTime.value = now / 1000;
+
+  // hover cell
+  let hov = null;
+  if (lastPtr && !pointers.size) {
+    const g = groundAt(lastPtr.x, lastPtr.y, new THREE.Vector3());
+    if (g) {
+      const [bx] = moveAxis(S.tx, S.tfx, g.x * D), [bz] = moveAxis(S.tz, S.tfz, g.z * D);
+      hov = cellAt(bx, bz);
+      const x0 = relX(bx, 0) / D, z0 = relZ(bz, 0) / D;
+      if (!hov.out) gridUniforms.uHov.value.set(x0, z0, x0 + 1 / D, z0 + 1 / D); else gridUniforms.uHov.value.set(1e9, 1e9, 1e9, 1e9);
+    }
+  }
+  if (!hov) gridUniforms.uHov.value.set(1e9, 1e9, 1e9, 1e9);
+
+  // selected cell + beacon + off-screen pointer
+  const off = $('off');
+  if (s.sel !== null) {
+    const [bx, bz] = cellOrigin(s.sel, s);
+    const rx = relX(bx, 0), rz = relZ(bz, 0), x0 = rx / D, z0 = rz / D;
+    gridUniforms.uSel.value.set(C(x0), C(z0), C(x0 + 1 / D), C(z0 + 1 / D));
+    const cx = (rx + 0.5) / D, cz = (rz + 0.5) / D, distFt = Math.hypot(rx + 0.5, rz + 0.5), dS = distFt / D;
+    const near = D < 45 && dS < 3;
+    beacon.visible = !near && dS < 5000;
+    if (beacon.visible) {
+      beacon.position.set(cx, 0, cz);
+      halo.scale.setScalar(Math.max(0.018, 0.75 / D));
+      halo.material.opacity = 0.5 + 0.4 * Math.sin(now / 250);
+    }
+    // label or edge arrow
+    const dir = dS > 1000 ? 1000 / dS : 1;
+    v3.set(cx * dir, 0, cz * dir).applyMatrix4(camera.matrixWorldInverse);
+    const behind = v3.z > 0;
+    const p = project(cx * dir, near ? 0 : 0.13, cz * dir);
+    const txt = `${s.fmt(s.sel)}${distFt > 30 ? ' · ' + fmtLenPlain(distFt) : ''}`;
+    if (p && p.on && !behind) {
+      off.hidden = true;
+      selLabel.innerHTML = `<b>Target</b><span>${txt}</span>`; placeLabel(selLabel, p, 1);
+    } else {
+      selLabel.hidden = true; off.hidden = false;
+      v3.set(cx * dir, 0, cz * dir).project(camera);
+      let vx = v3.x, vy = v3.y; if (behind) { vx = -vx; vy = -vy; }
+      const ang = Math.atan2(-vy, vx), m = 46;
+      const k = Math.min((W / 2 - m) / Math.abs(Math.cos(ang) || 1e-6), (H / 2 - m) / Math.abs(Math.sin(ang) || 1e-6));
+      const ox = W / 2 + Math.cos(ang) * k, oy = H / 2 + Math.sin(ang) * k;
+      off.querySelector('i').style.transform = `rotate(${ang}rad)`;
+      off.querySelector('span').textContent = txt;
+      const tw = off.offsetWidth;
+      off.style.transform = `translate(${clamp(ox - (Math.cos(ang) > 0 ? tw : 0), 8, W - tw - 8)}px, ${clamp(oy - 8, 8, H - 24)}px)`;
+    }
+  } else { gridUniforms.uSel.value.set(1e9, 1e9, 1e9, 1e9); beacon.visible = false; selLabel.hidden = true; off.hidden = true; }
+
+  // avatar
+  S.moving = Math.max(0, S.moving - dt);
+  const hs = FT_PER_M / D;
+  human.visible = hs * 1.8 > 0.0015;
+  if (human.visible) {
+    human.scale.setScalar(hs);
+    let dh = S.heading - human.rotation.y; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+    human.rotation.y += dh * (1 - Math.exp(-dt * 10));
+    const walking = S.moving > 0 ? 1 : 0, ph = S.stride / 2.2 * Math.PI;
+    const { legs, arms } = human.userData;
+    const amp = walking * 0.55;
+    legs[0].rotation.x = Math.sin(ph) * amp; legs[1].rotation.x = -Math.sin(ph) * amp;
+    arms[0].rotation.x = -Math.sin(ph) * amp * 0.8; arms[1].rotation.x = Math.sin(ph) * amp * 0.8;
+    placeLabel(youLabel, project(0, 1.95 * hs, 0), smooth(140, 40, D) * (D > 6 ? 1 : 0));
+  } else youLabel.hidden = true;
+
+  // references
+  const baseX = Number(S.ax - S.tx) + (S.afx - S.tfx), baseZ = Number(S.az - S.tz) + (S.afz - S.tfz);
+  const homeX = relX(0n, 0), homeZ = relZ(0n, 0);
+  for (const r of REFS) {
+    const bx0 = r.home ? homeX : baseX, bz0 = r.home ? homeZ : baseZ;
+    const sx = (bx0 + r.ox * FT_PER_M) / D, sz = (bz0 + r.oz * FT_PER_M) / D, app = r.sizeFt / D;
+    const vis = app > 0.004 && app < 80 && Math.hypot(sx, sz) - app < 3000;
+    r.obj.visible = vis;
+    if (!vis) { r.label.hidden = true; r.markEls.forEach(m => m.hidden = true); continue; }
+    const sc = r.unit * FT_PER_M / D;
+    r.obj.position.set(sx, 0, sz); r.obj.scale.setScalar(sc);
+    const lo = smooth(0.03, 0.08, app) * (1 - smooth(5, 12, app));
+    placeLabel(r.label, lo > 0 ? project(sx, r.labelH * sc, sz) : null, lo);
+    if (r.marks) {
+      const mo = smooth(0.4, 0.9, app) * (1 - smooth(25, 50, app));
+      r.marks.forEach((m, i) => {
+        const v = new THREE.Vector3(m.x, m.y, m.z).applyMatrix4(r.obj.matrixWorld.compose(r.obj.position, r.obj.quaternion, r.obj.scale));
+        placeLabel(r.markEls[i], mo > 0 ? project(v.x, v.y, v.z) : null, mo);
+      });
+    }
+  }
+
+  renderer.render(scene, camera);
+
+  // readouts (throttled)
+  if (now - hudTick > 90) {
+    hudTick = now;
+    const feet = cellAt(S.tx, S.tz);
+    $('r-feet').textContent = describeCell(feet);
+    $('r-ptr').textContent = hov ? describeCell(hov) : '–';
+    $('r-sel').textContent = s.sel !== null ? s.fmt(s.sel) : '–';
+    const vw = D * FOV_K * (W / H);
+    $('h-view').innerHTML = fmtLen(vw) + ' across';
+    $('h-speed').textContent = keys.size ? (Math.max(WALK_FT_S, D * 0.37) <= WALK_FT_S + 0.01 ? 'walking 3 mph' : 'moving ' + fmtLenPlain(Math.max(WALK_FT_S, D * 0.37)) + '/s') : '';
+    let note = '';
+    if (vw > UNIVERSE_FT * 30) note = `The observable universe is now ${sci(vw / UNIVERSE_FT)} times smaller than this view.`;
+    else if (vw > s.sideFt * 1.2 && s.sideFt > 1) note = `The whole ${s.short} space fits in this view.`;
+    $('h-note').innerHTML = note;
+    const cur = $('cur'), lh = ladderEl.clientHeight;
+    cur.style.top = ((1 - (Math.log10(vw) - LAD_MIN) / (LAD_MAX - LAD_MIN)) * lh) + 'px';
+    cur.querySelector('span').innerHTML = fmtLen(vw).replace(/ <span class="dim">.*<\/span>/, '');
+  }
+  requestAnimationFrame(frame);
+}
+
+fillJump();
+selectSpace(S.space);
+resize();
+if (innerWidth <= 760) $('infod').open = false;
+if (innerWidth / innerHeight < 1) S.logD = S.logDGoal = logDForWidth(22);
+setMsg('You stand in the middle of the IPv4 grid. Each floor tile is one address. 8.8.8.8 is marked.');
+requestAnimationFrame(frame);
+window.keyspace = { S, SPACES, REFS, flyTo, sha256 };
+</script>
+</body>
+</html>
